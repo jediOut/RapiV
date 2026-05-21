@@ -1,5 +1,6 @@
 import { Injectable, OnModuleDestroy } from "@nestjs/common";
 import { JobsOptions, Queue } from "bullmq";
+import { redisConnection } from "../../common/queue/redis-connection";
 
 export const PAYMENT_WEBHOOK_QUEUE = "payment-webhook-events";
 
@@ -43,13 +44,4 @@ export class PaymentProcessingQueue implements OnModuleDestroy {
   async onModuleDestroy(): Promise<void> {
     await this.queue.close();
   }
-}
-
-export function redisConnection() {
-  return {
-    host: process.env.REDIS_HOST || "localhost",
-    port: Number(process.env.REDIS_PORT || 6379),
-    password: process.env.REDIS_PASSWORD || undefined,
-    maxRetriesPerRequest: null
-  };
 }

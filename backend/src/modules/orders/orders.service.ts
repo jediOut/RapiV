@@ -350,7 +350,7 @@ export class OrdersService {
     savedOrder.items = order.items;
 
     if (nextStatus === "READY") {
-      await this.ensureDeliveryOffersForGroup(order.orderGroupId);
+      await this.enqueueDeliveryOfferGeneration(order.orderGroupId);
     }
     await this.notifyCustomerOrderStatus(order.orderGroupId, nextStatus);
 
@@ -426,6 +426,48 @@ export class OrdersService {
     }
 
     return summaries;
+  }
+
+  async findReadyOrderGroupIdsNeedingDeliveryOffers(): Promise<string[]> {
+    await this.expireStaleOffers();
+
+    const readyOrders = await this.orderRepository.find({
+      where: { status: "READY" }
+    });
+    const orderGroupIds = [...new Set(readyOrders.map((order) => order.orderGroupId).filter(Boolean))];
+    const recoverableOrderGroupIds: string[] = [];
+
+    for (const orderGroupId of orderGroupIds) {
+      const orders = await this.orderRepository.find({
+        where: { orderGroupId }
+      });
+
+      if (!orders.length || orders.some((order) => order.courierId)) {
+        continue;
+      }
+
+      const groupStatus = this.deriveOrderGroupStatus(
+        orders.map((order) => order.status as BusinessOrderStatus)
+      );
+
+      if (groupStatus !== "READY_FOR_PICKUP") {
+        continue;
+      }
+
+      const existingOffer = await this.deliveryOfferRepository.findOne({
+        where: { orderGroupId, status: "PENDING" }
+      });
+
+      if (!existingOffer) {
+        recoverableOrderGroupIds.push(orderGroupId);
+      }
+    }
+
+    return recoverableOrderGroupIds;
+  }
+
+  async generateDeliveryOffersForGroup(orderGroupId: string): Promise<void> {
+    await this.ensureDeliveryOffersForGroup(orderGroupId);
   }
 
   async acceptDeliveryOffer(courierId: string, offerId: string): Promise<OrderGroup> {
@@ -1034,7 +1076,7 @@ export class OrdersService {
       })
     );
 
-      if (offers.length) {
+    if (offers.length) {
       await this.deliveryOfferRepository.save(offers);
       await this.notificationsService.sendToUsers(
         offers.map((offer) => offer.courierId),
@@ -1045,6 +1087,10 @@ export class OrdersService {
         }
       );
     }
+  }
+
+  private async enqueueDeliveryOfferGeneration(orderGroupId: string): Promise<void> {
+    await this.orderProcessingQueue.addDeliveryOfferGeneration(orderGroupId);
   }
 
   private scoreCourierForOrder(profile: CourierProfile, order: Order): number {

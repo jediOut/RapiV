@@ -12,6 +12,7 @@ import { ProductsModule } from "../products/products.module";
 import { OrdersController } from "./orders.controller";
 import { OrdersService } from "./orders.service";
 import { OrderProcessingQueue } from "./order-processing.queue";
+import { OrderOfferProcessor } from "./order-offer.processor";
 import { UsersModule } from "../users/users.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 
@@ -24,7 +25,7 @@ import { NotificationsModule } from "../notifications/notifications.module";
     NotificationsModule
   ],
   controllers: [OrdersController],
-  providers: [OrdersService, OrderProcessingQueue],
+  providers: [OrdersService, OrderProcessingQueue, OrderOfferProcessor],
   exports: [OrdersService]
 })
 export class OrdersModule {}

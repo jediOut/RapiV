@@ -4,9 +4,9 @@ import { Job, Worker } from "bullmq";
 import {
   PAYMENT_WEBHOOK_QUEUE,
   PaymentProcessingQueue,
-  PaymentWebhookJob,
-  redisConnection
+  PaymentWebhookJob
 } from "./payment-processing.queue";
+import { redisConnection } from "../../common/queue/redis-connection";
 import { PaymentsService } from "./payments.service";
 
 @Injectable()

@@ -102,6 +102,48 @@ function createService(options: {
     }
   };
 
+  const deliveryOfferRepository: RepositoryMock<DeliveryOffer> & {
+    create: (value: Partial<DeliveryOffer>) => DeliveryOffer;
+  } = {
+    async findOne(options: { where: Partial<DeliveryOffer> }) {
+      return offers.find((offer) =>
+        Object.entries(options.where).every(
+          ([key, value]) => (offer as unknown as Record<string, unknown>)[key] === value
+        )
+      ) ?? null;
+    },
+    async find(options: { where?: Partial<DeliveryOffer> }) {
+      if (!options.where) {
+        return offers;
+      }
+
+      return offers.filter((offer) =>
+        Object.entries(options.where ?? {}).every(
+          ([key, value]) => (offer as unknown as Record<string, unknown>)[key] === value
+        )
+      );
+    },
+    async save(entity: DeliveryOffer | DeliveryOffer[]) {
+      const values = Array.isArray(entity) ? entity : [entity];
+
+      for (const offer of values) {
+        if (!offers.some((existing) => existing.id === offer.id)) {
+          offers.push(offer);
+        }
+      }
+
+      return entity;
+    },
+    create(value: Partial<DeliveryOffer>) {
+      return {
+        id: `offer-${offers.length + 1}`,
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+        updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+        ...value
+      } as DeliveryOffer;
+    }
+  };
+
   const manager = {
     async findOne(entity: unknown, options: { where: Record<string, unknown> }) {
       if (entity === Order) {
@@ -226,6 +268,12 @@ function createService(options: {
   const orderProcessingQueue = {
     add<T>(task: () => Promise<T>) {
       return task();
+    },
+    async addDeliveryOfferGeneration() {
+      return undefined;
+    },
+    async addDeliveryOfferGenerations() {
+      return undefined;
     }
   };
 
@@ -246,7 +294,7 @@ function createService(options: {
 
   const service = new OrdersService(
     orderRepository as never,
-    {} as never,
+    deliveryOfferRepository as never,
     {} as never,
     userRepository as never,
     {} as never,
