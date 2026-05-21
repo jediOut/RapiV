@@ -1,15 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
   Linking,
-  SafeAreaView,
+  Pressable,
+  RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
 import * as Location from 'expo-location';
+import { Ionicons } from '@expo/vector-icons';
 import MapView, { Marker, Polyline } from 'react-native-maps';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   acceptDeliveryOffer,
@@ -23,25 +27,39 @@ import {
 } from '../services/orderApi';
 import { sessionStorage } from '../services/sessionStorage';
 import { Order } from '../types/business';
+import type { User } from '../types/auth';
 import { colors } from '../theme/colors';
 import { VEGA_SERVICE_address } from '../config/serviceZone';
 import { StateView } from '../components/StateView';
 
 type ListedOrder = Order & {
-  listMode: 'assigned' | 'offer';
+  listMode: 'assigned' | 'offer' | 'history';
   offerId?: string;
   offerScore?: number;
 };
 
 const ACTIVE_DELIVERY_STATUSES = ['ASSIGNED', 'PICKED_UP', 'ON_THE_WAY'] as const;
+type CourierTab = 'work' | 'history' | 'profile';
+
+const STATUS_LABELS: Record<string, string> = {
+  ASSIGNED: 'Asignado',
+  PICKED_UP: 'Recogido',
+  ON_THE_WAY: 'En camino',
+  DELIVERED: 'Entregado',
+  READY_FOR_PICKUP: 'Listo para recoger',
+};
 
 const HomeScreen: React.FC = () => {
+  const insets = useSafeAreaInsets();
+  const [activeTab, setActiveTab] = useState<CourierTab>('work');
+  const [user, setUser] = useState<User | null>(null);
   const [deliveryOffers, setDeliveryOffers] = useState<DeliveryOffer[]>([]);
   const [assignedOrders, setAssignedOrders] = useState<Order[]>([]);
   const [deliveryLocations, setDeliveryLocations] = useState<
     Record<string, { customer: { latitude: number; longitude: number } | null; courier: { latitude: number; longitude: number } | null }>
   >({});
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [mutatingOrderId, setMutatingOrderId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -62,15 +80,20 @@ const HomeScreen: React.FC = () => {
         return;
       }
 
-      await updateCourierAvailability(token, { status: 'AVAILABLE' });
+      const currentUser = await sessionStorage.getUser();
+      setUser(currentUser);
 
       const [offers, assigned] = await Promise.all([
         fetchDeliveryOffers(token),
         fetchAssignedOrders(token),
       ]);
+      const hasActiveDelivery = assigned.some((order) =>
+        ACTIVE_DELIVERY_STATUSES.includes(order.status as typeof ACTIVE_DELIVERY_STATUSES[number])
+      );
+      await updateCourierAvailability(token, { status: hasActiveDelivery ? 'BUSY' : 'AVAILABLE' });
 
       setDeliveryOffers(offers);
-      setAssignedOrders(assigned.filter((order) => order.status !== 'DELIVERED'));
+      setAssignedOrders(assigned);
       const active = assigned.filter((order) =>
         ACTIVE_DELIVERY_STATUSES.includes(order.status as typeof ACTIVE_DELIVERY_STATUSES[number])
       );
@@ -82,6 +105,15 @@ const HomeScreen: React.FC = () => {
       setError(fetchError instanceof Error ? fetchError.message : 'No se pudo cargar los pedidos');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function refreshOrders() {
+    setRefreshing(true);
+    try {
+      await loadOrders();
+    } finally {
+      setRefreshing(false);
     }
   }
 
@@ -190,6 +222,10 @@ const HomeScreen: React.FC = () => {
     await Linking.openURL(`tel:${phone}`);
   }
 
+  function formatStatus(status: string) {
+    return STATUS_LABELS[status] ?? status;
+  }
+
   function renderOrder(item: ListedOrder) {
     const orderItems = item.items ?? item.businessOrders?.flatMap((order) => order.items ?? []) ?? [];
     const location = deliveryLocations[item.id];
@@ -217,13 +253,32 @@ const HomeScreen: React.FC = () => {
 
     return (
       <View style={styles.card}>
-        <Text style={styles.orderId}>Pedido #{item.id.slice(0, 8)}</Text>
-        <Text style={styles.orderStatus}>
-          {item.listMode === 'offer' ? `Oferta sugerida (${item.offerScore ?? 0})` : item.status}
-        </Text>
+        <View style={styles.cardHeader}>
+          <View>
+            <Text style={styles.orderId}>Pedido #{item.id.slice(0, 8)}</Text>
+            <Text style={styles.orderStatus}>
+              {item.listMode === 'offer'
+                ? `Oferta sugerida (${item.offerScore ?? 0})`
+                : formatStatus(item.status)}
+            </Text>
+          </View>
+          <View style={[
+            styles.statusBadge,
+            item.listMode === 'offer' && styles.offerBadge,
+            item.status === 'DELIVERED' && styles.deliveredBadge,
+          ]}>
+            <Text style={[
+              styles.statusBadgeText,
+              item.listMode === 'offer' && styles.offerBadgeText,
+              item.status === 'DELIVERED' && styles.deliveredBadgeText,
+            ]}>
+              {item.listMode === 'offer' ? 'Nueva' : formatStatus(item.status)}
+            </Text>
+          </View>
+        </View>
         <Text style={styles.orderMeta}>Direccion: {item.deliveryAddress}</Text>
         {item.customerName ? <Text style={styles.orderMeta}>Cliente: {item.customerName}</Text> : null}
-        {item.customerPhone ? (
+        {item.customerPhone && item.status !== 'DELIVERED' ? (
           <TouchableOpacity onPress={() => callCustomer(item.customerPhone!)} style={styles.phoneButton}>
             <Text style={styles.phoneText}>Marcar: {item.customerPhone}</Text>
           </TouchableOpacity>
@@ -286,29 +341,33 @@ const HomeScreen: React.FC = () => {
           </TouchableOpacity>
         ) : null}
 
-        <TouchableOpacity
-          disabled={mutatingOrderId === item.id}
-          onPress={() =>
-            item.listMode === 'offer' && item.offerId
-              ? handleAcceptOffer(item.id, item.offerId)
-              : handleAdvance(item)
-          }
-          style={[styles.actionButton, mutatingOrderId === item.id && styles.disabledButton]}
-        >
-          <Text style={styles.actionText}>
-            {mutatingOrderId === item.id
-              ? 'Actualizando...'
-              : item.listMode === 'offer'
-                ? 'Aceptar oferta'
-                : nextLabel}
-          </Text>
-        </TouchableOpacity>
+        {item.listMode !== 'history' ? (
+          <TouchableOpacity
+            disabled={mutatingOrderId === item.id}
+            onPress={() =>
+              item.listMode === 'offer' && item.offerId
+                ? handleAcceptOffer(item.id, item.offerId)
+                : handleAdvance(item)
+            }
+            style={[styles.actionButton, mutatingOrderId === item.id && styles.disabledButton]}
+          >
+            <Text style={styles.actionText}>
+              {mutatingOrderId === item.id
+                ? 'Actualizando...'
+                : item.listMode === 'offer'
+                  ? 'Aceptar oferta'
+                  : nextLabel}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
     );
   }
 
+  const activeOrders = assignedOrders.filter((order) => order.status !== 'DELIVERED');
+  const deliveredOrders = assignedOrders.filter((order) => order.status === 'DELIVERED');
   const listedOrders: ListedOrder[] = [
-    ...assignedOrders.map((order) => ({ ...order, listMode: 'assigned' as const })),
+    ...activeOrders.map((order) => ({ ...order, listMode: 'assigned' as const })),
     ...deliveryOffers.map((offer) => ({
       ...offer.order,
       listMode: 'offer' as const,
@@ -316,13 +375,45 @@ const HomeScreen: React.FC = () => {
       offerScore: offer.score,
     })),
   ];
+  const historyOrders: ListedOrder[] = deliveredOrders.map((order) => ({
+    ...order,
+    listMode: 'history' as const,
+  }));
+  const totalDeliveredCents = useMemo(
+    () => deliveredOrders.reduce((sum, order) => sum + order.totalCents, 0),
+    [deliveredOrders]
+  );
+  const isBusy = activeOrders.some((order) =>
+    ACTIVE_DELIVERY_STATUSES.includes(order.status as typeof ACTIVE_DELIVERY_STATUSES[number])
+  );
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <Text style={styles.title}>Entregas</Text>
-      {loading ? (
-        <StateView title="Cargando pedidos" message="Estamos buscando pedidos listos y asignados." type="loading" />
-      ) : error ? (
+  function renderHeader() {
+    return (
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.eyebrow}>RapiV Repartidor</Text>
+          <Text style={styles.title}>
+            {activeTab === 'work'
+              ? 'Entregas'
+              : activeTab === 'history'
+                ? 'Historial'
+                : 'Perfil'}
+          </Text>
+        </View>
+        <TouchableOpacity onPress={refreshOrders} style={styles.refreshButton}>
+          <Ionicons name="refresh" size={20} color={colors.primary} />
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  function renderWorkTab() {
+    if (loading) {
+      return <StateView title="Cargando pedidos" message="Estamos buscando pedidos listos y asignados." type="loading" />;
+    }
+
+    if (error) {
+      return (
         <StateView
           actionLabel="Reintentar"
           message={error}
@@ -330,22 +421,152 @@ const HomeScreen: React.FC = () => {
           title={error.includes('Sin conexion') ? 'Sin conexion' : 'No pudimos cargar los pedidos'}
           type="error"
         />
-      ) : listedOrders.length === 0 ? (
+      );
+    }
+
+    if (listedOrders.length === 0) {
+      return (
         <StateView
           actionLabel="Actualizar"
           message="Cuando el sistema te recomiende un pedido por zona y disponibilidad, aparecera aqui."
           onAction={loadOrders}
           title="No tienes ofertas disponibles"
         />
-      ) : (
-        <FlatList
-          data={listedOrders}
-          keyExtractor={(item) => `${item.listMode}-${item.id}`}
-          contentContainerStyle={styles.list}
-          renderItem={({ item }) => renderOrder(item)}
+      );
+    }
+
+    return (
+      <FlatList
+        data={listedOrders}
+        keyExtractor={(item) => `${item.listMode}-${item.id}`}
+        contentContainerStyle={styles.list}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshOrders} />}
+        renderItem={({ item }) => renderOrder(item)}
+      />
+    );
+  }
+
+  function renderHistoryTab() {
+    if (loading) {
+      return <StateView title="Cargando historial" message="Estamos consultando tus entregas." type="loading" />;
+    }
+
+    if (historyOrders.length === 0) {
+      return (
+        <StateView
+          actionLabel="Actualizar"
+          message="Tus pedidos entregados apareceran aqui cuando completes tus primeras entregas."
+          onAction={loadOrders}
+          title="Aun no tienes entregas completadas"
         />
-      )}
-    </SafeAreaView>
+      );
+    }
+
+    return (
+      <FlatList
+        data={historyOrders}
+        keyExtractor={(item) => `history-${item.id}`}
+        contentContainerStyle={styles.list}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshOrders} />}
+        renderItem={({ item }) => renderOrder(item)}
+      />
+    );
+  }
+
+  function renderProfileTab() {
+    return (
+      <ScrollView
+        contentContainerStyle={styles.profileContent}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshOrders} />}
+      >
+        <View style={styles.profileCard}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{user?.fullName?.charAt(0)?.toUpperCase() ?? 'R'}</Text>
+          </View>
+          <Text style={styles.profileName}>{user?.fullName ?? 'Repartidor'}</Text>
+          <Text style={styles.profileEmail}>{user?.email ?? 'Cuenta de repartidor'}</Text>
+          <View style={[styles.availabilityPill, isBusy && styles.busyPill]}>
+            <Ionicons
+              name={isBusy ? 'bicycle' : 'radio-button-on'}
+              size={15}
+              color={isBusy ? colors.warning : colors.success}
+            />
+            <Text style={styles.availabilityText}>{isBusy ? 'En entrega activa' : 'Disponible'}</Text>
+          </View>
+        </View>
+
+        <View style={styles.metricsGrid}>
+          <View style={styles.metricCard}>
+            <Text style={styles.metricValue}>{activeOrders.length}</Text>
+            <Text style={styles.metricLabel}>Activas</Text>
+          </View>
+          <View style={styles.metricCard}>
+            <Text style={styles.metricValue}>{deliveredOrders.length}</Text>
+            <Text style={styles.metricLabel}>Entregadas</Text>
+          </View>
+          <View style={styles.metricCard}>
+            <Text style={styles.metricValue}>${(totalDeliveredCents / 100).toFixed(0)}</Text>
+            <Text style={styles.metricLabel}>Valor entregado</Text>
+          </View>
+        </View>
+
+        <View style={styles.infoCard}>
+          <View style={styles.infoRow}>
+            <Ionicons name="star-outline" size={20} color={colors.primary} />
+            <View style={styles.infoTextBlock}>
+              <Text style={styles.infoTitle}>Valoraciones</Text>
+              <Text style={styles.infoText}>Aun no hay calificaciones para mostrar.</Text>
+            </View>
+          </View>
+          <View style={styles.infoRow}>
+            <Ionicons name="navigate-outline" size={20} color={colors.primary} />
+            <View style={styles.infoTextBlock}>
+              <Text style={styles.infoTitle}>Zonas preferidas</Text>
+              <Text style={styles.infoText}>Se usaran para recomendarte pedidos cercanos.</Text>
+            </View>
+          </View>
+        </View>
+      </ScrollView>
+    );
+  }
+
+  function renderCurrentTab() {
+    if (activeTab === 'history') {
+      return renderHistoryTab();
+    }
+
+    if (activeTab === 'profile') {
+      return renderProfileTab();
+    }
+
+    return renderWorkTab();
+  }
+
+  function renderTabButton(tab: CourierTab, icon: keyof typeof Ionicons.glyphMap, label: string) {
+    const isActive = activeTab === tab;
+
+    return (
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => setActiveTab(tab)}
+        style={[styles.tabButton, isActive && styles.activeTabButton]}
+      >
+        <Ionicons name={icon} size={21} color={isActive ? colors.primary : colors.muted} />
+        <Text style={[styles.tabLabel, isActive && styles.activeTabLabel]}>{label}</Text>
+      </Pressable>
+    );
+  }
+
+  return (
+    <View style={[styles.container, { paddingTop: insets.top + 12 }]}>
+      {renderHeader()}
+      <View style={styles.content}>{renderCurrentTab()}</View>
+      <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+        {renderTabButton('work', 'bicycle-outline', 'Entregas')}
+        {renderTabButton('history', 'receipt-outline', 'Historial')}
+        {renderTabButton('profile', 'person-outline', 'Perfil')}
+      </View>
+    </View>
   );
 };
 
@@ -353,16 +574,41 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
-    padding: 16,
+  },
+  content: {
+    flex: 1,
+  },
+  header: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingBottom: 14,
+  },
+  eyebrow: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
   },
   title: {
-    fontSize: 22,
+    fontSize: 28,
     fontWeight: '800',
-    marginBottom: 18,
     color: colors.text,
   },
+  refreshButton: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    height: 42,
+    justifyContent: 'center',
+    width: 42,
+  },
   list: {
-    paddingBottom: 24,
+    paddingHorizontal: 16,
+    paddingBottom: 92,
   },
   card: {
     backgroundColor: colors.surface,
@@ -371,6 +617,12 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     padding: 16,
     marginBottom: 14,
+  },
+  cardHeader: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-between',
   },
   orderId: {
     fontSize: 16,
@@ -382,6 +634,29 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontWeight: '700',
     marginBottom: 8,
+  },
+  statusBadge: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  statusBadgeText: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  offerBadge: {
+    backgroundColor: '#ECFDF5',
+  },
+  offerBadgeText: {
+    color: colors.success,
+  },
+  deliveredBadge: {
+    backgroundColor: '#F1F5F9',
+  },
+  deliveredBadgeText: {
+    color: colors.muted,
   },
   orderMeta: {
     color: colors.textSecondary,
@@ -442,6 +717,145 @@ const styles = StyleSheet.create({
   },
   disabledButton: {
     opacity: 0.6,
+  },
+  tabBar: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderTopWidth: 1,
+    bottom: 0,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    left: 0,
+    paddingHorizontal: 10,
+    paddingTop: 8,
+    position: 'absolute',
+    right: 0,
+  },
+  tabButton: {
+    alignItems: 'center',
+    borderRadius: 8,
+    flex: 1,
+    gap: 3,
+    paddingVertical: 8,
+  },
+  activeTabButton: {
+    backgroundColor: '#EFF6FF',
+  },
+  tabLabel: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  activeTabLabel: {
+    color: colors.primary,
+  },
+  profileContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 108,
+  },
+  profileCard: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 20,
+  },
+  avatar: {
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    borderRadius: 999,
+    height: 70,
+    justifyContent: 'center',
+    width: 70,
+  },
+  avatarText: {
+    color: colors.primary,
+    fontSize: 30,
+    fontWeight: '900',
+  },
+  profileName: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: '900',
+    marginTop: 12,
+    textAlign: 'center',
+  },
+  profileEmail: {
+    color: colors.textSecondary,
+    fontSize: 14,
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  availabilityPill: {
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    borderRadius: 999,
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  busyPill: {
+    backgroundColor: '#FFFBEB',
+  },
+  availabilityText: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  metricsGrid: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 14,
+  },
+  metricCard: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    flex: 1,
+    padding: 12,
+  },
+  metricValue: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  metricLabel: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 3,
+  },
+  infoCard: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginTop: 14,
+    padding: 16,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    gap: 12,
+    paddingVertical: 10,
+  },
+  infoTextBlock: {
+    flex: 1,
+  },
+  infoTitle: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  infoText: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 2,
   },
 });
 
