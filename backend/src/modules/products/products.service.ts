@@ -1,0 +1,87 @@
+import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { InjectRepository } from "@nestjs/typeorm";
+import { Repository } from "typeorm";
+
+import { BusinessesService } from "../businesses/businesses.service";
+import { Product } from "./product.entity";
+import { CreateProductDto } from "./dto/create-product.dto";
+
+@Injectable()
+export class ProductsService {
+  constructor(
+    @InjectRepository(Product)
+    private readonly productRepository: Repository<Product>,
+    private readonly businessesService: BusinessesService
+  ) {}
+
+  async create(ownerUserId: string, businessId: string, dto: CreateProductDto): Promise<Product> {
+    await this.assertBusinessOwner(ownerUserId, businessId);
+
+    const product = this.productRepository.create({
+      businessId,
+      name: dto.name.trim(),
+      category: dto.category.trim(),
+      image: dto.image?.trim(),
+      priceCents: dto.priceCents,
+      available: true,
+      stock: 0
+    });
+
+    return this.productRepository.save(product);
+  }
+
+  async findByBusiness(businessId: string): Promise<Product[]> {
+    await this.businessesService.findById(businessId);
+    return this.productRepository.find({
+      where: { businessId },
+      relations: ['business']
+    });
+  }
+
+  async findAvailable(): Promise<Product[]> {
+    return this.productRepository.find({
+      where: { available: true },
+      relations: ["business"],
+      order: { createdAt: "DESC" }
+    });
+  }
+
+  async findById(productId: string): Promise<Product> {
+    const product = await this.productRepository.findOne({
+      where: { id: productId },
+      relations: ['business']
+    });
+
+    if (!product) {
+      throw new NotFoundException("Product not found");
+    }
+
+    return product;
+  }
+
+  async updateAvailability(
+    ownerUserId: string,
+    businessId: string,
+    productId: string,
+    available: boolean
+  ): Promise<Product> {
+    await this.assertBusinessOwner(ownerUserId, businessId);
+
+    const product = await this.findById(productId);
+
+    if (product.businessId !== businessId) {
+      throw new NotFoundException("Product not found for business");
+    }
+
+    product.available = available;
+    return this.productRepository.save(product);
+  }
+
+  private async assertBusinessOwner(ownerUserId: string, businessId: string): Promise<void> {
+    const business = await this.businessesService.findById(businessId);
+
+    if (business.ownerUserId !== ownerUserId) {
+      throw new ForbiddenException("User does not own this business");
+    }
+  }
+}

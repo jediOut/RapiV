@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "RapiV Repartidor",
+    "slug": "rapiv-repartidor",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTabletMode": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "RapiV usa tu ubicacion durante la entrega para mostrar la ruta al cliente."
+      }
+    },
+    "android": {
+      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "POST_NOTIFICATIONS"],
+      "adaptiveIcon": {
+        "backgroundColor": "#ffffff"
+      }
+    },
+    "plugins": ["expo-location", "expo-notifications"]
+  }
+}
