@@ -8,8 +8,8 @@ scrape_configs:
       - targets:
           - prometheus:9090
 
-  - job_name: rapiv-backend-local
+  - job_name: rapiv-backend
     metrics_path: /api/metrics
     static_configs:
       - targets:
-          - host.docker.internal:3000
+          - backend:3000
