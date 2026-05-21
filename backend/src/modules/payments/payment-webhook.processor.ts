@@ -7,6 +7,7 @@ import {
   PaymentWebhookJob
 } from "./payment-processing.queue";
 import { redisConnection } from "../../common/queue/redis-connection";
+import { MonitoringService } from "../monitoring/monitoring.service";
 import { PaymentsService } from "./payments.service";
 
 @Injectable()
@@ -16,7 +17,8 @@ export class PaymentWebhookProcessor implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     private readonly paymentsService: PaymentsService,
-    private readonly paymentQueue: PaymentProcessingQueue
+    private readonly paymentQueue: PaymentProcessingQueue,
+    private readonly monitoring: MonitoringService
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -30,6 +32,14 @@ export class PaymentWebhookProcessor implements OnModuleInit, OnModuleDestroy {
     );
 
     this.worker.on("failed", (job, error) => {
+      if (job) {
+        this.monitoring.recordWorkerJob({
+          queue: PAYMENT_WEBHOOK_QUEUE,
+          jobName: job.name,
+          status: "failed",
+          durationMs: this.jobDurationMs(job)
+        });
+      }
       this.logger.error(
         `Payment webhook job ${job?.id ?? "unknown"} failed: ${error.message}`,
         error.stack
@@ -38,6 +48,15 @@ export class PaymentWebhookProcessor implements OnModuleInit, OnModuleDestroy {
 
     this.worker.on("error", (error) => {
       this.logger.error(`Payment webhook worker error: ${error.message}`, error.stack);
+    });
+
+    this.worker.on("completed", (job) => {
+      this.monitoring.recordWorkerJob({
+        queue: PAYMENT_WEBHOOK_QUEUE,
+        jobName: job.name,
+        status: "completed",
+        durationMs: this.jobDurationMs(job)
+      });
     });
 
     const recoverableEventIds = await this.paymentsService.findRecoverablePaymentEventIds();
@@ -53,6 +72,14 @@ export class PaymentWebhookProcessor implements OnModuleInit, OnModuleDestroy {
   }
 
   private async process(job: Job<PaymentWebhookJob>): Promise<void> {
+    this.monitoring.recordPaymentEvent("webhook_job_started", {
+      eventId: job.data.eventId,
+      jobId: job.id
+    });
     await this.paymentsService.processWebhookEvent(job.data.eventId);
+  }
+
+  private jobDurationMs(job: Job): number {
+    return job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : 0;
   }
 }

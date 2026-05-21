@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Optional,
   UnauthorizedException
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
@@ -18,6 +19,7 @@ import { PaymentEvent } from "./payment-event.entity";
 import { PaymentProviderService } from "./payment-provider.service";
 import { PaymentProcessingQueue } from "./payment-processing.queue";
 import { Payment, PaymentStatus } from "./payment.entity";
+import { MonitoringService } from "../monitoring/monitoring.service";
 
 type PaymentResponse = {
   id: string;
@@ -41,7 +43,9 @@ export class PaymentsService {
     private readonly dataSource: DataSource,
     private readonly ordersService: OrdersService,
     private readonly providerService: PaymentProviderService,
-    private readonly processingQueue: PaymentProcessingQueue
+    private readonly processingQueue: PaymentProcessingQueue,
+    @Optional()
+    private readonly monitoring?: MonitoringService
   ) {}
 
   async createPayment(
@@ -102,6 +106,12 @@ export class PaymentsService {
       });
 
       const saved = await this.paymentRepository.save(payment);
+      this.monitoring?.recordPaymentEvent("created", {
+        paymentId: saved.id,
+        orderGroupId: saved.orderGroupId,
+        amountCents: saved.amountCents,
+        status: saved.status
+      });
       return this.toResponse(saved, providerPayment.clientSecret, providerPayment.checkoutUrl);
     } catch (error) {
       if (this.isUniqueViolation(error)) {
@@ -170,9 +180,18 @@ export class PaymentsService {
     try {
       const savedEvent = await this.paymentEventRepository.save(event);
       await this.processingQueue.addWebhookEvent(savedEvent.id);
+      this.monitoring?.recordPaymentEvent("webhook_received", {
+        eventId: savedEvent.id,
+        providerEventId: savedEvent.providerEventId,
+        type: savedEvent.type
+      });
       return { received: true, duplicate: false };
     } catch (error) {
       if (this.isUniqueViolation(error)) {
+        this.monitoring?.recordPaymentEvent("webhook_duplicate", {
+          providerEventId: event.providerEventId,
+          type: event.type
+        });
         return { received: true, duplicate: true };
       }
 
@@ -210,10 +229,19 @@ export class PaymentsService {
         event.errorMessage = null;
         await manager.save(PaymentEvent, event);
       });
+      this.monitoring?.recordPaymentEvent("webhook_processed", {
+        eventId,
+        providerPaymentId,
+        localPaymentId: providerDetails.externalReference
+      });
     } catch (error) {
       event.status = "FAILED";
       event.errorMessage = error instanceof Error ? error.message : "Unknown payment event error";
       await this.paymentEventRepository.save(event);
+      this.monitoring?.recordPaymentEvent("webhook_failed", {
+        eventId,
+        error: event.errorMessage
+      });
       throw error;
     }
   }
@@ -278,6 +306,11 @@ export class PaymentsService {
 
         await manager.save(Order, orders);
       }
+      this.monitoring?.recordPaymentEvent("status_applied", {
+        paymentId,
+        orderGroupId: payment.orderGroupId,
+        status: nextStatus
+      });
     });
   }
 

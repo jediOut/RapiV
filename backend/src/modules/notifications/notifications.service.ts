@@ -1,9 +1,10 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Optional } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 
 import { RegisterPushTokenDto } from "./dto/register-push-token.dto";
 import { PushToken } from "./push-token.entity";
+import { MonitoringService } from "../monitoring/monitoring.service";
 
 type PushMessage = {
   title: string;
@@ -15,7 +16,9 @@ type PushMessage = {
 export class NotificationsService {
   constructor(
     @InjectRepository(PushToken)
-    private readonly pushTokenRepository: Repository<PushToken>
+    private readonly pushTokenRepository: Repository<PushToken>,
+    @Optional()
+    private readonly monitoring?: MonitoringService
   ) {}
 
   async registerPushToken(userId: string, dto: RegisterPushTokenDto): Promise<{ ok: true }> {
@@ -33,6 +36,10 @@ export class NotificationsService {
     });
 
     await this.pushTokenRepository.save(pushToken);
+    this.monitoring?.recordNotificationEvent("token_registered", {
+      userId,
+      app: dto.app
+    });
     return { ok: true };
   }
 
@@ -41,11 +48,20 @@ export class NotificationsService {
       where: { userId }
     });
 
+    this.monitoring?.recordNotificationEvent("send_to_user", {
+      userId,
+      tokenCount: tokens.length,
+      type: message.data?.type
+    });
     await this.sendToTokens(tokens, message);
   }
 
   async sendToUsers(userIds: string[], message: PushMessage): Promise<void> {
     const uniqueUserIds = [...new Set(userIds)];
+    this.monitoring?.recordNotificationEvent("send_to_users", {
+      userCount: uniqueUserIds.length,
+      type: message.data?.type
+    });
 
     await Promise.all(uniqueUserIds.map((userId) => this.sendToUser(userId, message)));
   }
@@ -75,7 +91,15 @@ export class NotificationsService {
         },
         body: JSON.stringify(payload)
       });
+      this.monitoring?.recordNotificationEvent("expo_push_sent", {
+        tokenCount: expoTokens.length,
+        type: message.data?.type
+      });
     } catch {
+      this.monitoring?.recordNotificationEvent("expo_push_failed", {
+        tokenCount: expoTokens.length,
+        type: message.data?.type
+      });
       // Push delivery is best-effort; order state remains the source of truth.
     }
   }

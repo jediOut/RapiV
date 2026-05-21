@@ -7,6 +7,10 @@ export class HealthController {
   @Public()
   @Get()
   check() {
-    return { ok: true };
+    return {
+      ok: true,
+      service: "rapiv-backend",
+      uptimeSeconds: Math.round(process.uptime())
+    };
   }
 }

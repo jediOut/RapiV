@@ -3,7 +3,8 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
-  NotFoundException
+  NotFoundException,
+  Optional
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { randomUUID } from "node:crypto";
@@ -31,6 +32,7 @@ import type {
 import { Business } from "../businesses/business.entity";
 import { CourierProfile } from "../users/courier-profile.entity";
 import { assertInsideVegaServiceaddress } from "src/common/geo/vega-zone";
+import { MonitoringService } from "../monitoring/monitoring.service";
 
 export type DeliveryOfferSummary = {
   id: string;
@@ -58,7 +60,9 @@ export class OrdersService {
     private readonly dataSource: DataSource,
     private readonly businessesService: BusinessesService,
     private readonly orderProcessingQueue: OrderProcessingQueue,
-    private readonly notificationsService: NotificationsService
+    private readonly notificationsService: NotificationsService,
+    @Optional()
+    private readonly monitoring?: MonitoringService
   ) { }
 
   async create(
@@ -93,6 +97,10 @@ export class OrdersService {
       });
 
     this.pendingCreations.set(indexKey, creation);
+    this.monitoring?.recordOrderEvent("create_requested", {
+      customerId,
+      itemCount: dto.items.length
+    });
     return creation;
   }
 
@@ -195,7 +203,14 @@ export class OrdersService {
           await manager.save(Order, order);
         }
 
-        return this.loadOrderGroup(orderGroupId, manager);
+        const orderGroup = await this.loadOrderGroup(orderGroupId, manager);
+        this.monitoring?.recordOrderEvent("created", {
+          orderGroupId,
+          customerId,
+          businessOrderCount: orderGroup.businessOrders.length,
+          totalCents: orderGroup.totalCents
+        });
+        return orderGroup;
       });
     } catch (error) {
       if (this.isUniqueViolation(error)) {
@@ -351,6 +366,12 @@ export class OrdersService {
     if (nextStatus === "READY") {
       await this.enqueueDeliveryOfferGeneration(order.orderGroupId);
     }
+    this.monitoring?.recordOrderEvent("business_status_updated", {
+      orderGroupId: order.orderGroupId,
+      businessOrderId: order.id,
+      businessId,
+      status: nextStatus
+    });
     await this.notifyCustomerOrderStatus(order.orderGroupId, nextStatus);
 
     return this.mapBusinessOrder(savedOrder);
@@ -553,6 +574,12 @@ export class OrdersService {
 
       await manager.save(Order, orders);
       await manager.save(DeliveryOffer, [offer, ...cancelledOffers]);
+      this.monitoring?.recordOrderEvent("offer_accepted", {
+        orderGroupId: offer.orderGroupId,
+        offerId: offer.id,
+        courierId,
+        cancelledOffers: cancelledOffers.length
+      });
 
       await this.notificationsService.sendToUser(orders[0].userId, {
         title: "Tu pedido ya tiene repartidor",
@@ -638,6 +665,11 @@ export class OrdersService {
       }
 
       await manager.save(Order, orders);
+      this.monitoring?.recordOrderEvent("courier_status_updated", {
+        orderGroupId,
+        courierId,
+        status: nextStatus
+      });
 
       if (nextStatus === "DELIVERED") {
         const remainingActiveOrders = await manager.find(Order, {
@@ -1079,6 +1111,10 @@ export class OrdersService {
 
     if (offers.length) {
       await this.deliveryOfferRepository.save(offers);
+      this.monitoring?.recordOrderEvent("offers_generated", {
+        orderGroupId,
+        offerCount: offers.length
+      });
       await this.notificationsService.sendToUsers(
         offers.map((offer) => offer.courierId),
         {
@@ -1092,6 +1128,9 @@ export class OrdersService {
 
   private async enqueueDeliveryOfferGeneration(orderGroupId: string): Promise<void> {
     await this.orderProcessingQueue.addDeliveryOfferGeneration(orderGroupId);
+    this.monitoring?.recordOrderEvent("offer_generation_enqueued", {
+      orderGroupId
+    });
   }
 
   private scoreCourierForOrder(profile: CourierProfile, order: Order): number {

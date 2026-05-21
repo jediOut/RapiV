@@ -15,10 +15,12 @@ import { NotificationsModule } from "./modules/notifications/notifications.modul
 import { PaymentsModule } from "./modules/payments/payments.module";
 import { HealthController } from "./health.controller";
 import { MediaModule } from "./modules/media/media.module";
+import { MonitoringModule } from "./modules/monitoring/monitoring.module";
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: ["../.env", ".env"] }),
+    MonitoringModule,
     DatabaseModule,
     JwtModule.register({
       global: true,
