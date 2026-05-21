@@ -266,9 +266,6 @@ function createService(options: {
   };
 
   const orderProcessingQueue = {
-    add<T>(task: () => Promise<T>) {
-      return task();
-    },
     async addDeliveryOfferGeneration() {
       return undefined;
     },

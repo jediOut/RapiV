@@ -87,8 +87,7 @@ export class OrdersService {
       return pendingCreation;
     }
 
-    const creation = this.orderProcessingQueue
-      .add(() => this.createPersistedOrderGroup(customerId, normalizedIdempotencyKey, dto))
+    const creation = this.createPersistedOrderGroup(customerId, normalizedIdempotencyKey, dto)
       .finally(() => {
         this.pendingCreations.delete(indexKey);
       });
