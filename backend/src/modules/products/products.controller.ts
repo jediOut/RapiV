@@ -4,6 +4,7 @@ import { CurrentUser } from "../../common/auth/current-user.decorator";
 import { AuthenticatedUser } from "../../common/auth/jwt-auth.guard";
 import { CreateProductDto } from "./dto/create-product.dto";
 import { UpdateProductAvailabilityDto } from "./dto/update-product-availability.dto";
+import { UpdateProductDto } from "./dto/update-product.dto";
 import { ProductsService } from "./products.service";
 
 @Controller("businesses/:businessId/products")
@@ -32,6 +33,16 @@ export class ProductsController {
     @Body() dto: UpdateProductAvailabilityDto
   ) {
     return this.productsService.updateAvailability(user.sub, businessId, productId, dto.available);
+  }
+
+  @Patch(":productId")
+  async update(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("businessId") businessId: string,
+    @Param("productId") productId: string,
+    @Body() dto: UpdateProductDto
+  ) {
+    return this.productsService.update(user.sub, businessId, productId, dto);
   }
 }
 

@@ -46,6 +46,8 @@ export type BusinessOrder = {
   businessLatitude?: number | null;
   businessLongitude?: number | null;
   businessAddress?: string | null;
+  paymentStatus?: "UNPAID" | "PAID" | "REFUNDED";
+  paidAt?: string | Date | null;
 };
 
 export type OrderGroup = {

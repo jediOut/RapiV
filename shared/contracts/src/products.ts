@@ -19,6 +19,8 @@ export type CreateProductPayload = {
   image?: string;
 };
 
+export type UpdateProductPayload = Partial<CreateProductPayload>;
+
 export type UpdateProductAvailabilityPayload = {
   available: boolean;
 };

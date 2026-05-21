@@ -1,5 +1,5 @@
 import { apiRequest } from "./apiClient";
-import type { Business, CreateProductPayload, Product } from "../types/business";
+import type { Business, CreateProductPayload, Product, UpdateProductPayload } from "../types/business";
 
 export async function fetchMyBusinesses(token: string): Promise<Business[]> {
   return apiRequest<Business[]>("/businesses/mine", { token });
@@ -30,6 +30,7 @@ export async function updateBusiness(
     latitude?: number;
     longitude?: number;
     isOpen?: boolean;
+    logo?: string;
   }
 ): Promise<Business> {
   return apiRequest<Business>(
@@ -50,7 +51,10 @@ export async function updateBusiness(
           payload.longitude,
 
         isOpen:
-          payload.isOpen
+          payload.isOpen,
+
+        logo:
+          payload.logo
       }
     }
   );
@@ -71,6 +75,19 @@ export async function createBusinessProduct(
 ): Promise<Product> {
   return apiRequest<Product>(`/businesses/${businessId}/products`, {
     method: "POST",
+    token,
+    body: payload
+  });
+}
+
+export async function updateBusinessProduct(
+  token: string,
+  businessId: string,
+  productId: string,
+  payload: UpdateProductPayload
+): Promise<Product> {
+  return apiRequest<Product>(`/businesses/${businessId}/products/${productId}`, {
+    method: "PATCH",
     token,
     body: payload
   });

@@ -11,6 +11,7 @@ import {
   fetchBusinessProducts,
   fetchMyBusinesses,
   updateBusiness,
+  updateBusinessProduct,
   updateProductAvailability
 } from "../services/businessApi";
 import { createMediaUploadUrl, uploadImageToS3 } from "../services/mediaApi";
@@ -130,6 +131,12 @@ export function BusinessApp({
       selectedBusiness?.name ||
       "Mi Negocio",
 
+    id:
+      selectedBusiness?.id,
+
+    logo:
+      selectedBusiness?.logo,
+
     address:
       selectedBusiness?.address ||
       "",
@@ -152,7 +159,7 @@ export function BusinessApp({
 
   const activeOrders = orders.filter(
     (order) =>
-      order.status !== "READY"
+      !["DELIVERED", "REJECTED", "CANCELLED"].includes(order.status)
   ).length;
 
   const availableProducts =
@@ -338,7 +345,10 @@ export function BusinessApp({
 
             longitude:
               payload.coordinates
-                .longitude
+                .longitude,
+
+            logo:
+              payload.logo
           }
         );
 
@@ -539,6 +549,113 @@ export function BusinessApp({
     }
   }
 
+  async function handleUpdateProduct(
+    product: Product,
+    payload: Partial<CreateProductPayload>,
+    imageAsset?: ImagePickerAsset
+  ) {
+    if (!selectedBusiness) {
+      return;
+    }
+
+    setIsMutatingProduct(true);
+    setBusinessError(null);
+
+    try {
+      let imageUrl = payload.image;
+
+      if (imageAsset) {
+        const contentType = imageAsset.mimeType;
+
+        if (
+          contentType !== "image/jpeg" &&
+          contentType !== "image/png" &&
+          contentType !== "image/webp"
+        ) {
+          throw new Error("Usa una imagen JPG, PNG o WebP");
+        }
+
+        const upload = await createMediaUploadUrl(session.accessToken, {
+          targetType: "product-image",
+          targetId: product.id,
+          contentType
+        });
+
+        await uploadImageToS3(upload.uploadUrl, imageAsset.uri, contentType);
+        imageUrl = upload.publicUrl;
+      }
+
+      const updatedProduct = await updateBusinessProduct(
+        session.accessToken,
+        selectedBusiness.id,
+        product.id,
+        {
+          ...payload,
+          image: imageUrl
+        }
+      );
+
+      setProducts((current) =>
+        current.map((candidate) =>
+          candidate.id === updatedProduct.id ? updatedProduct : candidate
+        )
+      );
+    } catch (error) {
+      setBusinessError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo actualizar producto"
+      );
+    } finally {
+      setIsMutatingProduct(false);
+    }
+  }
+
+  async function handleUploadBusinessLogo(imageAsset: ImagePickerAsset) {
+    if (!selectedBusiness) {
+      return;
+    }
+
+    setIsUpdatingBusiness(true);
+    setBusinessError(null);
+
+    try {
+      const contentType = imageAsset.mimeType;
+
+      if (
+        contentType !== "image/jpeg" &&
+        contentType !== "image/png" &&
+        contentType !== "image/webp"
+      ) {
+        throw new Error("Usa una imagen JPG, PNG o WebP");
+      }
+
+      const upload = await createMediaUploadUrl(session.accessToken, {
+        targetType: "business-logo",
+        targetId: selectedBusiness.id,
+        contentType
+      });
+
+      await uploadImageToS3(upload.uploadUrl, imageAsset.uri, contentType);
+
+      const updatedBusiness = await updateBusiness(
+        session.accessToken,
+        selectedBusiness.id,
+        { logo: upload.publicUrl }
+      );
+
+      setSelectedBusiness(updatedBusiness);
+    } catch (error) {
+      setBusinessError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo subir el logo"
+      );
+    } finally {
+      setIsUpdatingBusiness(false);
+    }
+  }
+
   async function handleUpdateOrderStatus(
     order: BusinessOrder,
     nextStatus:
@@ -691,6 +808,9 @@ export function BusinessApp({
             onToggleProduct={
               toggleProduct
             }
+            onUpdateProduct={
+              handleUpdateProduct
+            }
             prepTime={prepTime}
             products={products}
           />
@@ -707,6 +827,9 @@ export function BusinessApp({
             }
             onSave={
               handleUpdateBusiness
+            }
+            onUploadLogo={
+              handleUploadBusinessLogo
             }
           />
         )}

@@ -30,6 +30,45 @@ const getStatusStyle = (status: BusinessOrder['status']) => {
   }
 };
 
+const getStatusLabel = (status: BusinessOrder['status']) => {
+  switch (status) {
+    case 'PENDING':
+      return 'Pendiente';
+    case 'ACCEPTED':
+      return 'Aceptado';
+    case 'PREPARING':
+      return 'Preparando';
+    case 'READY':
+      return 'Listo';
+    case 'ASSIGNED':
+      return 'Asignado';
+    case 'PICKED_UP':
+      return 'Recogido';
+    case 'ON_THE_WAY':
+      return 'En camino';
+    case 'DELIVERED':
+      return 'Entregado';
+    case 'REJECTED':
+      return 'Rechazado';
+    case 'CANCELLED':
+      return 'Cancelado';
+    default:
+      return status;
+  }
+};
+
+const getPaymentLabel = (paymentStatus?: string) => {
+  if (paymentStatus === 'PAID') {
+    return 'Pagado';
+  }
+
+  if (paymentStatus === 'REFUNDED') {
+    return 'Reembolsado';
+  }
+
+  return 'Pendiente de pago';
+};
+
 const getActionLabel = (status: BusinessOrder['status']) => {
   switch (status) {
     case 'PENDING':
@@ -56,9 +95,12 @@ export function OrderRow({ order, compact = false, onUpdateStatus }: OrderRowPro
           <Text style={styles.mutedText}>Items: {order.items.length}</Text>
         </View>
         <View style={[styles.orderStatus, statusStyle]}>
-          <Text style={styles.orderStatusText}>{order.status}</Text>
+          <Text style={styles.orderStatusText}>{getStatusLabel(order.status)}</Text>
         </View>
       </View>
+      <Text style={styles.paymentStatus}>
+        {getPaymentLabel(order.paymentStatus)}
+      </Text>
       {!compact && (
         <Text style={styles.orderItems} numberOfLines={2}>
           {order.items.map((item) => `${item.quantity}× ${item.productName}`).join(', ')}
@@ -138,6 +180,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     marginTop: 12
+  },
+  paymentStatus: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: 8
   },
   orderFooter: {
     alignItems: "center",

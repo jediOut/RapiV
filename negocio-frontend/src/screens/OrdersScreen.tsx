@@ -1,4 +1,5 @@
-import { StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useMemo, useState } from "react";
 
 import { OrderRow } from "../components/OrderRow";
 import { StateView } from "../components/StateView";
@@ -14,10 +15,39 @@ type OrdersScreenProps = {
 };
 
 export function OrdersScreen({ error, isLoading, onRetry, orders, onUpdateStatus }: OrdersScreenProps) {
+  const [mode, setMode] = useState<"active" | "completed">("active");
+  const activeOrders = useMemo(
+    () => orders.filter((order) => !["DELIVERED", "REJECTED", "CANCELLED"].includes(order.status)),
+    [orders]
+  );
+  const completedOrders = useMemo(
+    () => orders.filter((order) => ["DELIVERED", "REJECTED", "CANCELLED"].includes(order.status)),
+    [orders]
+  );
+  const visibleOrders = mode === "active" ? activeOrders : completedOrders;
+
   return (
     <View style={styles.panel}>
       <Text style={styles.sectionTitle}>Pedidos entrantes</Text>
       <Text style={styles.mutedText}>Acepta, prepara y marca pedidos listos para reparto.</Text>
+      <View style={styles.segmentedControl}>
+        <Pressable
+          onPress={() => setMode("active")}
+          style={[styles.segment, mode === "active" && styles.activeSegment]}
+        >
+          <Text style={[styles.segmentText, mode === "active" && styles.activeSegmentText]}>
+            Activos ({activeOrders.length})
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setMode("completed")}
+          style={[styles.segment, mode === "completed" && styles.activeSegment]}
+        >
+          <Text style={[styles.segmentText, mode === "completed" && styles.activeSegmentText]}>
+            Completados ({completedOrders.length})
+          </Text>
+        </Pressable>
+      </View>
       {isLoading ? (
         <StateView
           compact
@@ -34,14 +64,18 @@ export function OrdersScreen({ error, isLoading, onRetry, orders, onUpdateStatus
           title={error.includes("Sin conexion") ? "Sin conexion" : "No pudimos cargar pedidos"}
           type="error"
         />
-      ) : orders.length === 0 ? (
+      ) : visibleOrders.length === 0 ? (
         <StateView
           compact
-          message="Los pedidos nuevos apareceran aqui cuando los clientes ordenen."
-          title="No hay pedidos para este negocio"
+          message={
+            mode === "active"
+              ? "Los pedidos nuevos apareceran aqui cuando los clientes ordenen."
+              : "Los pedidos entregados o rechazados apareceran aqui."
+          }
+          title={mode === "active" ? "No hay pedidos activos" : "No hay pedidos completados"}
         />
       ) : (
-        orders.map((order) => (
+        visibleOrders.map((order) => (
           <OrderRow key={order.id} order={order} onUpdateStatus={onUpdateStatus} />
         ))
       )}
@@ -70,4 +104,31 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18
   },
+  segmentedControl: {
+    backgroundColor: colors.background,
+    borderRadius: 8,
+    flexDirection: "row",
+    gap: 6,
+    marginTop: 14,
+    padding: 4
+  },
+  segment: {
+    alignItems: "center",
+    borderRadius: 8,
+    flex: 1,
+    paddingVertical: 10
+  },
+  activeSegment: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1
+  },
+  segmentText: {
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: "800"
+  },
+  activeSegmentText: {
+    color: colors.primary
+  }
 });

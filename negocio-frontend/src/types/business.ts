@@ -3,11 +3,12 @@ import type {
   BusinessOrder,
   Coordinates,
   CreateProductPayload,
-  Product as ContractProduct
+  Product as ContractProduct,
+  UpdateProductPayload
 } from "@rapidin/contracts";
 
 export type OrderStatus = "Nuevo" | "Preparando" | "Listo";
-export type { BusinessOrder, Coordinates, CreateProductPayload };
+export type { BusinessOrder, Coordinates, CreateProductPayload, UpdateProductPayload };
 
 export type Product = ContractProduct & {
   category: string;
@@ -18,7 +19,9 @@ export type Business = ContractBusiness & {
 };
 
 export type BusinessProfile = {
+  id?: string;
   name?: string;
+  logo?: string | null;
   address?: string;
   paymentMode?: string;
   alertsEnabled?: boolean;
@@ -28,6 +31,7 @@ export type BusinessProfile = {
 
 export type UpdateBusinessPayload = {
   name: string;
+  logo?: string;
   address: string;
   paymentMode: string;
   alertsEnabled: boolean;

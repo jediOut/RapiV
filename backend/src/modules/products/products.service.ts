@@ -5,6 +5,7 @@ import { Repository } from "typeorm";
 import { BusinessesService } from "../businesses/businesses.service";
 import { Product } from "./product.entity";
 import { CreateProductDto } from "./dto/create-product.dto";
+import { UpdateProductDto } from "./dto/update-product.dto";
 
 @Injectable()
 export class ProductsService {
@@ -74,6 +75,39 @@ export class ProductsService {
     }
 
     product.available = available;
+    return this.productRepository.save(product);
+  }
+
+  async update(
+    ownerUserId: string,
+    businessId: string,
+    productId: string,
+    dto: UpdateProductDto
+  ): Promise<Product> {
+    await this.assertBusinessOwner(ownerUserId, businessId);
+
+    const product = await this.findById(productId);
+
+    if (product.businessId !== businessId) {
+      throw new NotFoundException("Product not found for business");
+    }
+
+    if (dto.name !== undefined) {
+      product.name = dto.name.trim();
+    }
+
+    if (dto.category !== undefined) {
+      product.category = dto.category.trim();
+    }
+
+    if (dto.priceCents !== undefined) {
+      product.priceCents = dto.priceCents;
+    }
+
+    if (dto.image !== undefined) {
+      product.image = dto.image.trim();
+    }
+
     return this.productRepository.save(product);
   }
 

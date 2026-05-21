@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import {
   Alert,
+  Image,
   Pressable,
   StyleSheet,
   Switch,
@@ -15,6 +16,7 @@ import MapView, {
 } from "react-native-maps";
 
 import * as Location from "expo-location";
+import * as ImagePicker from "expo-image-picker";
 
 import { colors } from "../theme/colors";
 
@@ -24,7 +26,9 @@ type Coordinates = {
 };
 
 type BusinessProfile = {
+  id?: string;
   name?: string;
+  logo?: string | null;
   address?: string;
   paymentMode?: string;
   alertsEnabled?: boolean;
@@ -33,6 +37,7 @@ type BusinessProfile = {
 
 type UpdateBusinessPayload = {
   name: string;
+  logo?: string;
   address: string;
   paymentMode: string;
   alertsEnabled: boolean;
@@ -42,6 +47,7 @@ type UpdateBusinessPayload = {
 type SettingsScreenProps = {
   businessProfile: BusinessProfile;
   isLoading: boolean;
+  onUploadLogo: (imageAsset: ImagePicker.ImagePickerAsset) => void;
   onSave: (
     payload: UpdateBusinessPayload
   ) => void;
@@ -55,6 +61,7 @@ const DEFAULT_COORDINATES = {
 export function SettingsScreen({
   businessProfile,
   isLoading,
+  onUploadLogo,
   onSave
 }: SettingsScreenProps) {
   const mapRef = useRef<MapView | null>(
@@ -67,6 +74,10 @@ export function SettingsScreen({
 
   const [address, setAddress] = useState(
     businessProfile.address ?? ""
+  );
+
+  const [logoPreview, setLogoPreview] = useState(
+    businessProfile.logo ?? ""
   );
 
   const [paymentMode, setPaymentMode] =
@@ -199,7 +210,32 @@ export function SettingsScreen({
     }
   }
 
-  
+  async function handlePickLogo() {
+    const permission =
+      await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (!permission.granted) {
+      Alert.alert(
+        "Permiso denegado",
+        "Debes permitir acceso a tus imagenes."
+      );
+
+      return;
+    }
+
+    const result =
+      await ImagePicker.launchImageLibraryAsync({
+        allowsEditing: true,
+        aspect: [1, 1],
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.85
+      });
+
+    if (!result.canceled) {
+      setLogoPreview(result.assets[0].uri);
+      onUploadLogo(result.assets[0]);
+    }
+  }
 
   async function handleUseCurrentLocation() {
     try {
@@ -262,6 +298,7 @@ export function SettingsScreen({
   function handleSave() {
     onSave({
       name,
+      logo: businessProfile.logo ?? undefined,
       address,
       paymentMode,
       alertsEnabled,
@@ -274,6 +311,40 @@ export function SettingsScreen({
       <Text style={styles.sectionTitle}>
         Perfil del negocio
       </Text>
+
+      <View style={styles.logoRow}>
+        {logoPreview ? (
+          <Image
+            source={{ uri: logoPreview }}
+            style={styles.logoPreview}
+          />
+        ) : (
+          <View style={styles.logoPlaceholder}>
+            <Text style={styles.logoPlaceholderText}>
+              {name.charAt(0).toUpperCase() || "R"}
+            </Text>
+          </View>
+        )}
+
+        <View style={styles.logoContent}>
+          <Text style={styles.label}>
+            Logo del negocio
+          </Text>
+          <Text style={styles.switchDescription}>
+            Usa una imagen cuadrada para que se vea bien en la app.
+          </Text>
+        </View>
+
+        <Pressable
+          disabled={isLoading}
+          onPress={handlePickLogo}
+          style={styles.logoButton}
+        >
+          <Text style={styles.logoButtonText}>
+            Cambiar
+          </Text>
+        </Pressable>
+      </View>
 
       <View style={styles.field}>
         <Text style={styles.label}>
@@ -460,6 +531,57 @@ const styles = StyleSheet.create({
 
   field: {
     marginBottom: 18
+  },
+
+  logoRow: {
+    alignItems: "center",
+    borderColor: colors.border,
+    borderRadius: 12,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 12,
+    marginBottom: 18,
+    padding: 12
+  },
+
+  logoPreview: {
+    borderRadius: 12,
+    height: 64,
+    width: 64
+  },
+
+  logoPlaceholder: {
+    alignItems: "center",
+    backgroundColor: colors.primaryLight,
+    borderRadius: 12,
+    height: 64,
+    justifyContent: "center",
+    width: 64
+  },
+
+  logoPlaceholderText: {
+    color: colors.primary,
+    fontSize: 26,
+    fontWeight: "900"
+  },
+
+  logoContent: {
+    flex: 1
+  },
+
+  logoButton: {
+    backgroundColor: colors.primaryLight,
+    borderColor: colors.primaryBorder,
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10
+  },
+
+  logoButtonText: {
+    color: colors.primary,
+    fontSize: 13,
+    fontWeight: "800"
   },
 
   label: {

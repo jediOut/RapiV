@@ -974,6 +974,8 @@ export class OrdersService {
       businessLatitude: order.businessLatitude,
       businessLongitude: order.businessLongitude,
       businessAddress: order.businessAddress,
+      paymentStatus: order.paymentStatus,
+      paidAt: order.paidAt,
       status: order.status as BusinessOrderStatus,
       items,
       subtotalCents: order.subtotalCents || items.reduce((sum, item) => sum + item.lineTotalCents, 0)

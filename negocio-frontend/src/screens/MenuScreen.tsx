@@ -7,7 +7,7 @@ import { ProductRow } from "../components/ProductRow";
 import { PrimaryButton } from "../components/PrimaryButton";
 import { StateView } from "../components/StateView";
 import { colors } from "../theme/colors";
-import type { CreateProductPayload, Product } from "../types/business";
+import type { CreateProductPayload, Product, UpdateProductPayload } from "../types/business";
 
 type MenuScreenProps = {
   error: string | null;
@@ -15,6 +15,11 @@ type MenuScreenProps = {
   isMutatingProduct: boolean;
   onCreateProduct: (
     payload: CreateProductPayload,
+    imageAsset?: ImagePicker.ImagePickerAsset
+  ) => void;
+  onUpdateProduct: (
+    product: Product,
+    payload: UpdateProductPayload,
     imageAsset?: ImagePicker.ImagePickerAsset
   ) => void;
   onPrepTimeChange: (value: string) => void;
@@ -28,6 +33,7 @@ export function MenuScreen({
   isLoading,
   isMutatingProduct,
   onCreateProduct,
+  onUpdateProduct,
   onPrepTimeChange,
   onToggleProduct,
   prepTime,
@@ -37,6 +43,7 @@ export function MenuScreen({
   const [category, setCategory] = useState("");
   const [price, setPrice] = useState("");
   const [imageAsset, setImageAsset] = useState<ImagePicker.ImagePickerAsset | undefined>();
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
 
   async function pickProductImage() {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -57,22 +64,42 @@ export function MenuScreen({
     }
   }
 
-  function handleCreateProduct() {
-    const priceCents = Math.round(Number(price) * 100);
-
-    onCreateProduct(
-      {
-        name,
-        category,
-        priceCents
-      },
-      imageAsset
-    );
-
+  function resetProductForm() {
     setName("");
     setCategory("");
     setPrice("");
     setImageAsset(undefined);
+    setEditingProduct(null);
+  }
+
+  function startEditProduct(product: Product) {
+    setEditingProduct(product);
+    setName(product.name);
+    setCategory(product.category ?? "");
+    setPrice((product.priceCents / 100).toFixed(2));
+    setImageAsset(undefined);
+  }
+
+  function handleSaveProduct() {
+    const priceCents = Math.round(Number(price) * 100);
+
+    if (!name.trim() || !category.trim() || !Number.isFinite(priceCents) || priceCents <= 0) {
+      return;
+    }
+
+    const payload = {
+      name: name.trim(),
+      category: category.trim(),
+      priceCents
+    };
+
+    if (editingProduct) {
+      onUpdateProduct(editingProduct, payload, imageAsset);
+    } else {
+      onCreateProduct(payload, imageAsset);
+    }
+
+    resetProductForm();
   }
 
   return (
@@ -119,6 +146,7 @@ export function MenuScreen({
           <ProductRow
             key={product.id}
             disabled={isMutatingProduct}
+            onEdit={startEditProduct}
             onToggle={onToggleProduct}
             product={product}
           />
@@ -126,7 +154,19 @@ export function MenuScreen({
       </View>
 
       <View style={styles.panel}>
-        <Text style={styles.sectionTitle}>Agregar producto</Text>
+        <View style={styles.formHeader}>
+          <Text style={styles.sectionTitle}>
+            {editingProduct ? "Editar producto" : "Agregar producto"}
+          </Text>
+          {editingProduct ? (
+            <PrimaryButton
+              disabled={isMutatingProduct}
+              label="Cancelar"
+              onPress={resetProductForm}
+              variant="secondary"
+            />
+          ) : null}
+        </View>
         <TextInput
           onChangeText={setName}
           placeholder="Nombre"
@@ -152,6 +192,8 @@ export function MenuScreen({
         <View style={styles.imagePickerRow}>
           {imageAsset ? (
             <Image source={{ uri: imageAsset.uri }} style={styles.productPreview} />
+          ) : editingProduct?.image ? (
+            <Image source={{ uri: editingProduct.image }} style={styles.productPreview} />
           ) : (
             <View style={styles.productPreviewPlaceholder}>
               <Ionicons name="image-outline" size={28} color={colors.muted} />
@@ -170,8 +212,14 @@ export function MenuScreen({
         </View>
         <PrimaryButton
           disabled={isMutatingProduct}
-          label={isMutatingProduct ? "Guardando..." : "Guardar producto"}
-          onPress={handleCreateProduct}
+          label={
+            isMutatingProduct
+              ? "Guardando..."
+              : editingProduct
+                ? "Guardar cambios"
+                : "Guardar producto"
+          }
+          onPress={handleSaveProduct}
         />
       </View>
     </View>
@@ -193,6 +241,13 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 0,
     marginBottom: 4
+  },
+  formHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 12,
+    justifyContent: "space-between",
+    marginBottom: 10
   },
   inputRow: {
     alignItems: "center",
