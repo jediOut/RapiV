@@ -172,7 +172,9 @@ export default function App() {
     <NavigationContainer>
       <StatusBar style="dark" />
       <Stack.Navigator screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="Home" component={HomeScreen} />
+        <Stack.Screen name="Home">
+          {() => <HomeScreen onLogout={handleLogout} />}
+        </Stack.Screen>
       </Stack.Navigator>
     </NavigationContainer>
   );

@@ -37,6 +37,9 @@ type ListedOrder = Order & {
   offerId?: string;
   offerScore?: number;
 };
+type HomeScreenProps = {
+  onLogout: () => void;
+};
 
 const ACTIVE_DELIVERY_STATUSES = ['ASSIGNED', 'PICKED_UP', 'ON_THE_WAY'] as const;
 type CourierTab = 'work' | 'history' | 'profile';
@@ -50,7 +53,7 @@ const STATUS_LABELS: Record<string, string> = {
   READY_FOR_PICKUP: 'Listo para recoger',
 };
 
-const HomeScreen: React.FC = () => {
+const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<CourierTab>('work');
   const [user, setUser] = useState<User | null>(null);
@@ -573,6 +576,11 @@ const HomeScreen: React.FC = () => {
             </View>
           </View>
         </View>
+
+        <TouchableOpacity onPress={onLogout} style={styles.logoutButton}>
+          <Ionicons name="log-out-outline" size={19} color="#B91C1C" />
+          <Text style={styles.logoutText}>Cerrar sesion</Text>
+        </TouchableOpacity>
       </ScrollView>
     );
   }
@@ -903,6 +911,23 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
     marginTop: 2,
+  },
+  logoutButton: {
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+    marginTop: 14,
+    paddingVertical: 13,
+  },
+  logoutText: {
+    color: '#B91C1C',
+    fontSize: 14,
+    fontWeight: '900',
   },
 });
 
