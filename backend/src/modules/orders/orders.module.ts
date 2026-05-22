@@ -15,17 +15,20 @@ import { OrderProcessingQueue } from "./order-processing.queue";
 import { OrderOfferProcessor } from "./order-offer.processor";
 import { UsersModule } from "../users/users.module";
 import { NotificationsModule } from "../notifications/notifications.module";
+import { Payment } from "../payments/payment.entity";
+import { PaymentProviderService } from "../payments/payment-provider.service";
+import { OrderLifecycleProcessor } from "./order-lifecycle.processor";
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Order, OrderItem, DeliveryOffer, Product, User, CourierProfile]),
+    TypeOrmModule.forFeature([Order, OrderItem, DeliveryOffer, Product, User, CourierProfile, Payment]),
     BusinessesModule,
     ProductsModule,
     UsersModule,
     NotificationsModule
   ],
   controllers: [OrdersController],
-  providers: [OrdersService, OrderProcessingQueue, OrderOfferProcessor],
+  providers: [OrdersService, OrderProcessingQueue, OrderOfferProcessor, OrderLifecycleProcessor, PaymentProviderService],
   exports: [OrdersService]
 })
 export class OrdersModule {}

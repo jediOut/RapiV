@@ -72,7 +72,7 @@ const getPaymentLabel = (paymentStatus?: string) => {
 const getActionLabel = (status: BusinessOrder['status']) => {
   switch (status) {
     case 'PENDING':
-      return 'Aceptar';
+      return 'Aceptar y preparar';
     case 'ACCEPTED':
       return 'Preparar';
     case 'PREPARING':

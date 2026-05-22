@@ -311,6 +311,15 @@ function createService(options: {
     async addDeliveryOfferGenerations(orderGroupIds: string[]) {
       enqueuedOfferGenerations.push(...orderGroupIds);
       return undefined;
+    },
+    async addBusinessAcceptanceTimeout() {
+      return undefined;
+    },
+    async addBusinessReadyTimeout() {
+      return undefined;
+    },
+    async addDeliveryOfferTimeout() {
+      return undefined;
     }
   };
 
@@ -335,10 +344,12 @@ function createService(options: {
     {} as never,
     userRepository as never,
     courierProfileRepository as never,
+    {} as never,
     dataSource as never,
     businessesService as never,
     orderProcessingQueue as never,
-    notificationsService as never
+    notificationsService as never,
+    {} as never
   );
 
   return {
@@ -432,11 +443,11 @@ describe("OrdersService", () => {
       "ACCEPTED"
     );
 
-    assert.equal(accepted.status, "ACCEPTED");
-    assert.equal(pendingOrder.status, "ACCEPTED");
+    assert.equal(accepted.status, "PREPARING");
+    assert.equal(pendingOrder.status, "PREPARING");
 
     await assert.rejects(
-      service.updateBusinessOrderStatus(ownerUserId, businessId, pendingOrder.id, "READY"),
+      service.updateBusinessOrderStatus(ownerUserId, businessId, pendingOrder.id, "ACCEPTED"),
       ConflictException
     );
   });

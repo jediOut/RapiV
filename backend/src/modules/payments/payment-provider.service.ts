@@ -26,6 +26,12 @@ export type ProviderPaymentDetails = {
   raw: Record<string, unknown>;
 };
 
+export type ProviderRefund = {
+  providerRefundId: string;
+  status: string;
+  raw: Record<string, unknown>;
+};
+
 @Injectable()
 export class PaymentProviderService {
   readonly providerName = "mercadopago";
@@ -171,6 +177,53 @@ export class PaymentProviderService {
       externalReference: localPaymentId,
       status: "pending",
       raw: {}
+    };
+  }
+
+  async refundPayment(
+    providerPaymentId: string,
+    idempotencyKey: string
+  ): Promise<ProviderRefund> {
+    const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
+
+    if (!accessToken) {
+      throw new Error("Missing MERCADOPAGO_ACCESS_TOKEN");
+    }
+
+    if (!this.looksLikeMercadoPagoPaymentId(providerPaymentId)) {
+      return {
+        providerRefundId: `pending-${providerPaymentId}`,
+        status: "PENDING_PROVIDER_PAYMENT_ID",
+        raw: {
+          reason: "Provider payment id is not available yet",
+          providerPaymentId
+        }
+      };
+    }
+
+    const response = await fetch(
+      `https://api.mercadopago.com/v1/payments/${providerPaymentId}/refunds`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          "X-Idempotency-Key": idempotencyKey
+        },
+        body: JSON.stringify({})
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Mercado Pago refund failed with status ${response.status}`);
+    }
+
+    const refund = (await response.json()) as Record<string, unknown>;
+
+    return {
+      providerRefundId: String(refund.id ?? ""),
+      status: String(refund.status ?? "unknown"),
+      raw: refund
     };
   }
 

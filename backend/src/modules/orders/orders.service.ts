@@ -33,6 +33,9 @@ import { Business } from "../businesses/business.entity";
 import { CourierProfile } from "../users/courier-profile.entity";
 import { assertInsideVegaServiceaddress } from "src/common/geo/vega-zone";
 import { MonitoringService } from "../monitoring/monitoring.service";
+import { Payment } from "../payments/payment.entity";
+import { PaymentProviderService } from "../payments/payment-provider.service";
+import type { OrderLifecycleJob } from "./order-processing.queue";
 
 export type DeliveryOfferSummary = {
   id: string;
@@ -57,10 +60,13 @@ export class OrdersService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(CourierProfile)
     private readonly courierProfileRepository: Repository<CourierProfile>,
+    @InjectRepository(Payment)
+    private readonly paymentRepository: Repository<Payment>,
     private readonly dataSource: DataSource,
     private readonly businessesService: BusinessesService,
     private readonly orderProcessingQueue: OrderProcessingQueue,
     private readonly notificationsService: NotificationsService,
+    private readonly paymentProviderService: PaymentProviderService,
     @Optional()
     private readonly monitoring?: MonitoringService
   ) { }
@@ -359,20 +365,24 @@ export class OrdersService {
     }
 
     this.assertValidTransition(order.status as BusinessOrderStatus, nextStatus);
-    order.status = nextStatus;
+    order.status = nextStatus === "ACCEPTED" ? "PREPARING" : nextStatus;
     const savedOrder = await this.orderRepository.save(order);
     savedOrder.items = order.items;
 
-    if (nextStatus === "READY") {
+    if (nextStatus === "ACCEPTED") {
+      await this.orderProcessingQueue.addBusinessReadyTimeout(order.orderGroupId, order.id);
+    }
+
+    if (order.status === "READY") {
       await this.enqueueDeliveryOfferGeneration(order.orderGroupId);
     }
     this.monitoring?.recordOrderEvent("business_status_updated", {
       orderGroupId: order.orderGroupId,
       businessOrderId: order.id,
       businessId,
-      status: nextStatus
+      status: order.status
     });
-    await this.notifyCustomerOrderStatus(order.orderGroupId, nextStatus);
+    await this.notifyCustomerOrderStatus(order.orderGroupId, order.status as BusinessOrderStatus);
 
     return this.mapBusinessOrder(savedOrder);
   }
@@ -495,6 +505,60 @@ export class OrdersService {
 
   async generateDeliveryOffersForGroup(orderGroupId: string): Promise<void> {
     await this.ensureDeliveryOffersForGroup(orderGroupId);
+  }
+
+  async scheduleBusinessAcceptanceTimeouts(orderGroupId: string): Promise<void> {
+    const orders = await this.orderRepository.find({
+      where: { orderGroupId, status: "PENDING" }
+    });
+
+    const paidPendingOrders = orders.filter((order) => order.paymentStatus === "PAID");
+
+    for (const order of paidPendingOrders) {
+      await this.orderProcessingQueue.addBusinessAcceptanceTimeout(order.orderGroupId, order.id);
+    }
+
+    if (paidPendingOrders.length) {
+      this.monitoring?.recordOrderEvent("business_acceptance_timeout_scheduled", {
+        orderGroupId,
+        businessOrderCount: paidPendingOrders.length
+      });
+    }
+  }
+
+  async scheduleRecoverableLifecycleTimeouts(): Promise<void> {
+    const paidActiveOrders = await this.orderRepository.find({
+      where: { paymentStatus: "PAID" }
+    });
+
+    for (const order of paidActiveOrders) {
+      if (order.status === "PENDING") {
+        await this.orderProcessingQueue.addBusinessAcceptanceTimeout(order.orderGroupId, order.id);
+      }
+
+      if (order.status === "PREPARING" || order.status === "ACCEPTED") {
+        await this.orderProcessingQueue.addBusinessReadyTimeout(order.orderGroupId, order.id);
+      }
+    }
+
+    const readyOrderGroupIds = await this.findReadyOrderGroupIdsWithoutCourier();
+    for (const orderGroupId of readyOrderGroupIds) {
+      await this.orderProcessingQueue.addDeliveryOfferTimeout(orderGroupId);
+    }
+  }
+
+  async handleLifecycleJob(job: OrderLifecycleJob): Promise<void> {
+    if (job.type === "BUSINESS_ACCEPTANCE_TIMEOUT") {
+      await this.handleBusinessAcceptanceTimeout(job.orderGroupId, job.businessOrderId);
+      return;
+    }
+
+    if (job.type === "BUSINESS_READY_TIMEOUT") {
+      await this.handleBusinessReadyTimeout(job.orderGroupId, job.businessOrderId);
+      return;
+    }
+
+    await this.handleDeliveryOfferTimeout(job.orderGroupId);
   }
 
   async acceptDeliveryOffer(courierId: string, offerId: string): Promise<OrderGroup> {
@@ -880,6 +944,228 @@ export class OrdersService {
     };
   }
 
+  private async handleBusinessAcceptanceTimeout(
+    orderGroupId: string,
+    businessOrderId: string
+  ): Promise<void> {
+    const order = await this.orderRepository.findOne({
+      where: { id: businessOrderId, orderGroupId }
+    });
+
+    if (!order || order.status !== "PENDING" || order.paymentStatus !== "PAID") {
+      return;
+    }
+
+    await this.cancelOrderGroupAndRefund(
+      orderGroupId,
+      "BUSINESS_ACCEPTANCE_TIMEOUT",
+      "El negocio no acepto el pedido a tiempo."
+    );
+  }
+
+  private async handleBusinessReadyTimeout(
+    orderGroupId: string,
+    businessOrderId: string
+  ): Promise<void> {
+    const order = await this.orderRepository.findOne({
+      where: { id: businessOrderId, orderGroupId }
+    });
+
+    if (
+      !order ||
+      order.paymentStatus !== "PAID" ||
+      !["ACCEPTED", "PREPARING"].includes(order.status as string)
+    ) {
+      return;
+    }
+
+    await this.cancelOrderGroupAndRefund(
+      orderGroupId,
+      "BUSINESS_READY_TIMEOUT",
+      "El negocio no marco el pedido como listo a tiempo."
+    );
+  }
+
+  private async handleDeliveryOfferTimeout(orderGroupId: string): Promise<void> {
+    await this.expireStaleOffers();
+
+    const orders = await this.orderRepository.find({
+      where: { orderGroupId }
+    });
+
+    if (
+      !orders.length ||
+      orders.some((order) => order.courierId) ||
+      this.deriveOrderGroupStatus(orders.map((order) => order.status as BusinessOrderStatus)) !==
+      "READY_FOR_PICKUP"
+    ) {
+      return;
+    }
+
+    const offers = await this.deliveryOfferRepository.find({
+      where: { orderGroupId },
+      order: { score: "DESC", createdAt: "ASC" }
+    });
+    const bestOffer = offers.find((offer) => ["PENDING", "EXPIRED"].includes(offer.status));
+
+    if (!bestOffer) {
+      await this.ensureDeliveryOffersForGroup(orderGroupId);
+      await this.orderProcessingQueue.addDeliveryOfferTimeout(orderGroupId);
+      return;
+    }
+
+    await this.autoAssignOffer(bestOffer.id);
+  }
+
+  private async autoAssignOffer(offerId: string): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      const offer = await manager.findOne(DeliveryOffer, {
+        where: { id: offerId },
+        lock: { mode: "pessimistic_write" }
+      });
+
+      if (!offer || !["PENDING", "EXPIRED"].includes(offer.status)) {
+        return;
+      }
+
+      const orders = await manager.find(Order, {
+        where: { orderGroupId: offer.orderGroupId },
+        lock: { mode: "pessimistic_write" }
+      });
+
+      if (
+        !orders.length ||
+        orders.some((order) => order.courierId) ||
+        this.deriveOrderGroupStatus(orders.map((order) => order.status as BusinessOrderStatus)) !==
+        "READY_FOR_PICKUP"
+      ) {
+        offer.status = "CANCELLED";
+        await manager.save(DeliveryOffer, offer);
+        return;
+      }
+
+      for (const order of orders) {
+        order.courierId = offer.courierId;
+        order.status = "ASSIGNED";
+      }
+
+      offer.status = "ACCEPTED";
+      offer.acceptedAt = new Date();
+
+      const competingOffers = await manager.find(DeliveryOffer, {
+        where: { orderGroupId: offer.orderGroupId, status: "PENDING" }
+      });
+      const cancelledOffers = competingOffers.filter((competingOffer) => competingOffer.id !== offer.id);
+
+      for (const competingOffer of cancelledOffers) {
+        competingOffer.status = "CANCELLED";
+      }
+
+      const profile = await manager.findOne(CourierProfile, {
+        where: { userId: offer.courierId }
+      });
+
+      if (profile) {
+        profile.availabilityStatus = "BUSY";
+        await manager.save(CourierProfile, profile);
+      }
+
+      await manager.save(Order, orders);
+      await manager.save(DeliveryOffer, [offer, ...cancelledOffers]);
+
+      this.monitoring?.recordOrderEvent("offer_auto_assigned", {
+        orderGroupId: offer.orderGroupId,
+        offerId: offer.id,
+        courierId: offer.courierId,
+        cancelledOffers: cancelledOffers.length
+      });
+
+      await this.notificationsService.sendToUser(offer.courierId, {
+        title: "Entrega asignada",
+        body: "Te asignamos automaticamente un pedido listo para recoger.",
+        data: { type: "ORDER_ASSIGNED", orderGroupId: offer.orderGroupId }
+      });
+
+      await this.notificationsService.sendToUser(orders[0].userId, {
+        title: "Tu pedido ya tiene repartidor",
+        body: "Asignamos un repartidor para recoger tu pedido.",
+        data: { type: "ORDER_ASSIGNED", orderGroupId: offer.orderGroupId }
+      });
+    });
+  }
+
+  private async cancelOrderGroupAndRefund(
+    orderGroupId: string,
+    reason: string,
+    customerMessage: string
+  ): Promise<void> {
+    const refundKey = `refund:${orderGroupId}:${reason}`;
+    const payment = await this.paymentRepository.findOne({
+      where: { orderGroupId, status: "SUCCEEDED" },
+      order: { createdAt: "DESC" }
+    });
+
+    const refund = payment
+      ? await this.paymentProviderService.refundPayment(payment.providerPaymentId, refundKey)
+      : null;
+
+    await this.dataSource.transaction(async (manager) => {
+      const orders = await manager.find(Order, {
+        where: { orderGroupId },
+        lock: { mode: "pessimistic_write" }
+      });
+
+      if (!orders.length || orders.every((order) => order.paymentStatus === "REFUNDED")) {
+        return;
+      }
+
+      for (const order of orders) {
+        if (order.status !== "DELIVERED") {
+          order.status = "CANCELLED";
+        }
+        order.paymentStatus = payment ? "REFUNDED" : order.paymentStatus;
+      }
+
+      const offers = await manager.find(DeliveryOffer, {
+        where: { orderGroupId, status: "PENDING" }
+      });
+
+      for (const offer of offers) {
+        offer.status = "CANCELLED";
+      }
+
+      if (payment) {
+        payment.status = "CANCELLED";
+        payment.providerMetadata = {
+          ...(payment.providerMetadata ?? {}),
+          refundReason: reason,
+          refundKey,
+          refundProviderId: refund?.providerRefundId,
+          refundStatus: refund?.status,
+          refundRaw: refund?.raw
+        };
+        await manager.save(Payment, payment);
+      }
+
+      await manager.save(Order, orders);
+      if (offers.length) {
+        await manager.save(DeliveryOffer, offers);
+      }
+
+      this.monitoring?.recordOrderEvent("order_group_refunded", {
+        orderGroupId,
+        reason,
+        paymentId: payment?.id
+      });
+
+      await this.notificationsService.sendToUser(orders[0].userId, {
+        title: "Pedido reembolsado",
+        body: customerMessage,
+        data: { type: "ORDER_REFUNDED", orderGroupId, reason }
+      });
+    });
+  }
+
   private async notifyCustomerOrderStatus(
     orderGroupId: string,
     status: BusinessOrderStatus
@@ -1120,6 +1406,7 @@ export class OrdersService {
 
     if (offers.length) {
       await this.deliveryOfferRepository.save(offers);
+      await this.orderProcessingQueue.addDeliveryOfferTimeout(orderGroupId);
       this.monitoring?.recordOrderEvent("offers_generated", {
         orderGroupId,
         offerCount: offers.length

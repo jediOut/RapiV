@@ -266,6 +266,8 @@ export class PaymentsService {
       currency?: string;
     }
   ): Promise<void> {
+    let paidOrderGroupId: string | null = null;
+
     await this.dataSource.transaction(async (manager) => {
       const payment = await manager.findOne(Payment, {
         where: { id: paymentId },
@@ -294,6 +296,7 @@ export class PaymentsService {
       await manager.save(Payment, payment);
 
       if (nextStatus === "SUCCEEDED") {
+        paidOrderGroupId = payment.orderGroupId;
         const orders = await manager.find(Order, {
           where: { orderGroupId: payment.orderGroupId },
           lock: { mode: "pessimistic_write" }
@@ -312,6 +315,10 @@ export class PaymentsService {
         status: nextStatus
       });
     });
+
+    if (paidOrderGroupId) {
+      await this.ordersService.scheduleBusinessAcceptanceTimeouts(paidOrderGroupId);
+    }
   }
 
   private assertValidWebhookSignature(

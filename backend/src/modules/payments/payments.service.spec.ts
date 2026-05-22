@@ -194,6 +194,9 @@ function createService(options: {
         deliveryAddress: "Calle 1",
         createdAt: new Date()
       };
+    },
+    async scheduleBusinessAcceptanceTimeouts() {
+      return undefined;
     }
   };
 
