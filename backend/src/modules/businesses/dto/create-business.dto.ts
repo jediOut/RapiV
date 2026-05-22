@@ -1,3 +1,4 @@
+import { Type } from "class-transformer";
 import { IsNumber, IsOptional, IsString, MinLength } from "class-validator";
 
 export class CreateBusinessDto {
@@ -10,10 +11,12 @@ export class CreateBusinessDto {
   address?: string;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   latitude?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   longitude?: number;
 

@@ -1,6 +1,11 @@
 import { apiRequest } from "./apiClient";
 import type { Business, CreateProductPayload, Product, UpdateProductPayload } from "../types/business";
 
+function finiteNumberOrUndefined(value: unknown) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? numericValue : undefined;
+}
+
 export async function fetchMyBusinesses(token: string): Promise<Business[]> {
   return apiRequest<Business[]>("/businesses/mine", { token });
 }
@@ -15,8 +20,8 @@ export async function createBusiness(
     body: {
       name: payload.name.trim(),
       address: payload.address?.trim(),
-      latitude: payload.latitude,
-      longitude: payload.longitude
+      latitude: finiteNumberOrUndefined(payload.latitude),
+      longitude: finiteNumberOrUndefined(payload.longitude)
     }
   });
 }
@@ -33,31 +38,40 @@ export async function updateBusiness(
     logo?: string;
   }
 ): Promise<Business> {
-  return apiRequest<Business>(
-    `/businesses/${businessId}`,
-    {
-      method: "PATCH",
-      token,
-      body: {
-        name: payload.name?.trim(),
+  const body: Record<string, unknown> = {};
 
-        address:
-          payload.address?.trim(),
+  if (payload.name !== undefined) {
+    body.name = payload.name.trim();
+  }
 
-        latitude:
-          payload.latitude,
+  if (payload.address !== undefined) {
+    body.address = payload.address.trim();
+  }
 
-        longitude:
-          payload.longitude,
+  const latitude = finiteNumberOrUndefined(payload.latitude);
+  const longitude = finiteNumberOrUndefined(payload.longitude);
 
-        isOpen:
-          payload.isOpen,
+  if (latitude !== undefined) {
+    body.latitude = latitude;
+  }
 
-        logo:
-          payload.logo
-      }
-    }
-  );
+  if (longitude !== undefined) {
+    body.longitude = longitude;
+  }
+
+  if (payload.isOpen !== undefined) {
+    body.isOpen = payload.isOpen;
+  }
+
+  if (payload.logo !== undefined) {
+    body.logo = payload.logo;
+  }
+
+  return apiRequest<Business>(`/businesses/${businessId}`, {
+    method: "PATCH",
+    token,
+    body
+  });
 }
 
 

@@ -1,3 +1,4 @@
+import { Type } from "class-transformer";
 import { IsBoolean, IsNumber, IsOptional, IsString, MinLength } from "class-validator";
 import type { CreateBusinessPayload } from "@rapidin/contracts";
 
@@ -13,10 +14,12 @@ export class UpdateBusinessDto implements Partial<CreateBusinessPayload> {
   address?: string;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   latitude?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   longitude?: number;
 

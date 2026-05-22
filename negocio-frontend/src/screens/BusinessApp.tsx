@@ -67,6 +67,11 @@ const tabs: TabItem[] = [
   }
 ];
 
+function toFiniteNumber(value: unknown, fallback: number) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? numericValue : fallback;
+}
+
 type BusinessAppProps = {
   session: AuthSession;
   onLogout: () => void;
@@ -148,12 +153,10 @@ export function BusinessApp({
 
     coordinates: {
       latitude:
-        selectedBusiness?.latitude ??
-        20.0287,
+        toFiniteNumber(selectedBusiness?.latitude, 20.0287),
 
       longitude:
-        selectedBusiness?.longitude ??
-        -96.6473
+        toFiniteNumber(selectedBusiness?.longitude, -96.6473)
     }
   };
 
@@ -340,12 +343,10 @@ export function BusinessApp({
               payload.address,
 
             latitude:
-              payload.coordinates
-                .latitude,
+              toFiniteNumber(payload.coordinates?.latitude, selectedBusiness.latitude ?? 20.0287),
 
             longitude:
-              payload.coordinates
-                .longitude,
+              toFiniteNumber(payload.coordinates?.longitude, selectedBusiness.longitude ?? -96.6473),
 
             logo:
               payload.logo
