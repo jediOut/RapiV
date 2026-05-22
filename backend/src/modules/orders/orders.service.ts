@@ -401,11 +401,18 @@ export class OrdersService {
       maxDeliveryDistanceKm: dto.maxDeliveryDistanceKm ?? 35
     });
 
-    return this.courierProfileRepository.save(profile);
+    const savedProfile = await this.courierProfileRepository.save(profile);
+
+    if (savedProfile.availabilityStatus === "AVAILABLE") {
+      await this.enqueueReadyDeliveryOfferGenerations();
+    }
+
+    return savedProfile;
   }
 
   async findOffersForCourier(courierId: string): Promise<DeliveryOfferSummary[]> {
     await this.expireStaleOffers();
+    await this.ensureDeliveryOffersForAvailableCourier(courierId);
 
     const offers = await this.deliveryOfferRepository.find({
       where: { courierId, status: "PENDING" },
@@ -1055,14 +1062,6 @@ export class OrdersService {
       return;
     }
 
-    const existingOffer = await this.deliveryOfferRepository.findOne({
-      where: { orderGroupId, status: "PENDING" }
-    });
-
-    if (existingOffer) {
-      return;
-    }
-
     const users = await this.userRepository.find();
     const courierIds = users
       .filter((user) => (user.roles ?? []).includes("COURIER"))
@@ -1072,16 +1071,26 @@ export class OrdersService {
       return;
     }
 
+    const existingOffers = await this.deliveryOfferRepository.find({
+      where: { orderGroupId }
+    });
+    const alreadyOfferedCourierIds = new Set(existingOffers.map((offer) => offer.courierId));
+    const eligibleCourierIds = courierIds.filter((courierId) => !alreadyOfferedCourierIds.has(courierId));
+
+    if (!eligibleCourierIds.length) {
+      return;
+    }
+
     const profiles = await this.courierProfileRepository.find();
     const availableProfiles = profiles.filter(
       (profile) =>
-        courierIds.includes(profile.userId) &&
+        eligibleCourierIds.includes(profile.userId) &&
         profile.availabilityStatus === "AVAILABLE"
     );
 
     const candidates = availableProfiles.length
       ? availableProfiles
-      : courierIds.map((userId) =>
+      : eligibleCourierIds.map((userId) =>
         this.courierProfileRepository.create({
           userId,
           availabilityStatus: "AVAILABLE"
@@ -1131,6 +1140,63 @@ export class OrdersService {
     this.monitoring?.recordOrderEvent("offer_generation_enqueued", {
       orderGroupId
     });
+  }
+
+  private async enqueueReadyDeliveryOfferGenerations(): Promise<void> {
+    const orderGroupIds = await this.findReadyOrderGroupIdsWithoutCourier();
+
+    if (!orderGroupIds.length) {
+      return;
+    }
+
+    await this.orderProcessingQueue.addDeliveryOfferGenerations(orderGroupIds);
+    this.monitoring?.recordOrderEvent("available_courier_offer_generation_enqueued", {
+      orderGroupCount: orderGroupIds.length
+    });
+  }
+
+  private async ensureDeliveryOffersForAvailableCourier(courierId: string): Promise<void> {
+    const profile = await this.courierProfileRepository.findOne({
+      where: { userId: courierId }
+    });
+
+    if (profile && profile.availabilityStatus !== "AVAILABLE") {
+      return;
+    }
+
+    const orderGroupIds = await this.findReadyOrderGroupIdsWithoutCourier();
+
+    for (const orderGroupId of orderGroupIds) {
+      await this.ensureDeliveryOffersForGroup(orderGroupId);
+    }
+  }
+
+  private async findReadyOrderGroupIdsWithoutCourier(): Promise<string[]> {
+    const readyOrders = await this.orderRepository.find({
+      where: { status: "READY" }
+    });
+    const orderGroupIds = [...new Set(readyOrders.map((order) => order.orderGroupId).filter(Boolean))];
+    const readyOrderGroupIds: string[] = [];
+
+    for (const orderGroupId of orderGroupIds) {
+      const orders = await this.orderRepository.find({
+        where: { orderGroupId }
+      });
+
+      if (!orders.length || orders.some((order) => order.courierId)) {
+        continue;
+      }
+
+      const groupStatus = this.deriveOrderGroupStatus(
+        orders.map((order) => order.status as BusinessOrderStatus)
+      );
+
+      if (groupStatus === "READY_FOR_PICKUP") {
+        readyOrderGroupIds.push(orderGroupId);
+      }
+    }
+
+    return readyOrderGroupIds;
   }
 
   private scoreCourierForOrder(profile: CourierProfile, order: Order): number {

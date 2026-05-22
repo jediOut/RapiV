@@ -16,6 +16,7 @@ import { OrderItem } from "./order-item.entity";
 import { Order } from "./order.entity";
 import type { BusinessOrderStatus } from "./order.entity";
 import { OrdersService } from "./orders.service";
+import { User } from "../users/user.entity";
 
 type RepositoryMock<T> = {
   findOne: (options: { where: Partial<T> }) => Promise<T | null>;
@@ -67,6 +68,7 @@ function createService(options: {
   businesses?: Business[];
   offers?: DeliveryOffer[];
   courierProfiles?: CourierProfile[];
+  users?: User[];
   businessOwnerId?: string;
 } = {}) {
   const orders = options.orders ?? [];
@@ -74,6 +76,8 @@ function createService(options: {
   const businesses = options.businesses ?? [];
   const offers = options.offers ?? [];
   const courierProfiles = options.courierProfiles ?? [];
+  const users = options.users ?? [];
+  const enqueuedOfferGenerations: string[] = [];
   let orderSequence = 1;
   let transactionCount = 0;
 
@@ -261,15 +265,51 @@ function createService(options: {
       };
     },
     async find() {
-      return [];
+      return users;
+    }
+  };
+
+  const courierProfileRepository = {
+    create(value: Partial<CourierProfile>) {
+      return {
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+        updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+        ...value
+      } as CourierProfile;
+    },
+    async findOne(options: { where: Partial<CourierProfile> }) {
+      return courierProfiles.find((profile) =>
+        Object.entries(options.where).every(
+          ([key, value]) => (profile as unknown as Record<string, unknown>)[key] === value
+        )
+      ) ?? null;
+    },
+    async find() {
+      return courierProfiles;
+    },
+    async save(profile: CourierProfile) {
+      const existingIndex = courierProfiles.findIndex((existing) => existing.userId === profile.userId);
+
+      if (existingIndex >= 0) {
+        courierProfiles[existingIndex] = {
+          ...courierProfiles[existingIndex],
+          ...profile
+        };
+        return courierProfiles[existingIndex];
+      }
+
+      courierProfiles.push(profile);
+      return profile;
     }
   };
 
   const orderProcessingQueue = {
-    async addDeliveryOfferGeneration() {
+    async addDeliveryOfferGeneration(orderGroupId: string) {
+      enqueuedOfferGenerations.push(orderGroupId);
       return undefined;
     },
-    async addDeliveryOfferGenerations() {
+    async addDeliveryOfferGenerations(orderGroupIds: string[]) {
+      enqueuedOfferGenerations.push(...orderGroupIds);
       return undefined;
     }
   };
@@ -294,7 +334,7 @@ function createService(options: {
     deliveryOfferRepository as never,
     {} as never,
     userRepository as never,
-    {} as never,
+    courierProfileRepository as never,
     dataSource as never,
     businessesService as never,
     orderProcessingQueue as never,
@@ -304,6 +344,8 @@ function createService(options: {
   return {
     service,
     orders,
+    offers,
+    enqueuedOfferGenerations,
     sentNotifications,
     getTransactionCount: () => transactionCount
   };
@@ -503,6 +545,113 @@ describe("OrdersService", () => {
       type: "ORDER_ASSIGNED",
       orderGroupId
     });
+  });
+
+  it("requeues ready orders when a courier becomes available", async () => {
+    const firstOrder = createOrder({ id: "order-1", status: "READY" });
+    const secondOrder = createOrder({
+      id: "order-2",
+      businessId: "business-2",
+      status: "READY"
+    });
+    const { service, enqueuedOfferGenerations } = createService({
+      orders: [firstOrder, secondOrder]
+    });
+
+    await service.updateCourierAvailability(courierId, {
+      status: "AVAILABLE",
+      latitude: 20.0289,
+      longitude: -96.6472
+    });
+
+    assert.deepEqual(enqueuedOfferGenerations, [orderGroupId]);
+  });
+
+  it("adds a missing delivery offer for a newly available courier", async () => {
+    const order = createOrder({
+      status: "READY",
+      businessLatitude: 20.0289,
+      businessLongitude: -96.6472
+    });
+    const existingOffer = {
+      id: "offer-1",
+      orderGroupId,
+      courierId,
+      status: "PENDING",
+      score: 9000,
+      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: new Date(),
+      updatedAt: new Date()
+    } as DeliveryOffer;
+    const { service, offers } = createService({
+      orders: [order],
+      offers: [existingOffer],
+      users: [
+        { id: courierId, roles: ["COURIER"] } as User,
+        { id: otherCourierId, roles: ["COURIER"] } as User
+      ],
+      courierProfiles: [
+        {
+          userId: otherCourierId,
+          availabilityStatus: "AVAILABLE",
+          preferredLatitude: 20.0289,
+          preferredLongitude: -96.6472,
+          preferredRadiusKm: 35,
+          maxDeliveryDistanceKm: 35,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        } as CourierProfile
+      ]
+    });
+
+    await service.generateDeliveryOffersForGroup(orderGroupId);
+
+    assert.equal(offers.length, 2);
+    assert.equal(offers[1].courierId, otherCourierId);
+    assert.equal(offers[1].status, "PENDING");
+  });
+
+  it("creates missing offers before returning courier offers", async () => {
+    const order = createOrder({
+      status: "READY",
+      businessLatitude: 20.0289,
+      businessLongitude: -96.6472
+    });
+    const existingOffer = {
+      id: "offer-1",
+      orderGroupId,
+      courierId,
+      status: "PENDING",
+      score: 9000,
+      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: new Date(),
+      updatedAt: new Date()
+    } as DeliveryOffer;
+    const { service } = createService({
+      orders: [order],
+      offers: [existingOffer],
+      users: [
+        { id: courierId, roles: ["COURIER"] } as User,
+        { id: otherCourierId, roles: ["COURIER"] } as User
+      ],
+      courierProfiles: [
+        {
+          userId: otherCourierId,
+          availabilityStatus: "AVAILABLE",
+          preferredLatitude: 20.0289,
+          preferredLongitude: -96.6472,
+          preferredRadiusKm: 35,
+          maxDeliveryDistanceKm: 35,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        } as CourierProfile
+      ]
+    });
+
+    const summaries = await service.findOffersForCourier(otherCourierId);
+
+    assert.equal(summaries.length, 1);
+    assert.equal(summaries[0].order.id, orderGroupId);
   });
 
   it("rejects courier assignment unless the group is ready and unassigned to others", async () => {
