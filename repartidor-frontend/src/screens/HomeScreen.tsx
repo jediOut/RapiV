@@ -40,6 +40,7 @@ type ListedOrder = Order & {
 
 const ACTIVE_DELIVERY_STATUSES = ['ASSIGNED', 'PICKED_UP', 'ON_THE_WAY'] as const;
 type CourierTab = 'work' | 'history' | 'profile';
+type Coordinates = { latitude: number; longitude: number };
 
 const STATUS_LABELS: Record<string, string> = {
   ASSIGNED: 'Asignado',
@@ -213,7 +214,7 @@ const HomeScreen: React.FC = () => {
     });
   }
 
-  async function openSuggestedRoute(destination: { latitude: number; longitude: number }) {
+  async function openSuggestedRoute(destination: Coordinates) {
     const url = `https://www.google.com/maps/dir/?api=1&destination=${destination.latitude},${destination.longitude}&travelmode=driving`;
     await Linking.openURL(url);
   }
@@ -226,18 +227,57 @@ const HomeScreen: React.FC = () => {
     return STATUS_LABELS[status] ?? status;
   }
 
+  function getPickupPoint(order: Order): Coordinates | undefined {
+    const businessOrder = order.businessOrders?.find(
+      (current) => current.businessLatitude !== null && current.businessLatitude !== undefined
+        && current.businessLongitude !== null && current.businessLongitude !== undefined
+    );
+
+    if (!businessOrder) {
+      return undefined;
+    }
+
+    return {
+      latitude: Number(businessOrder.businessLatitude),
+      longitude: Number(businessOrder.businessLongitude),
+    };
+  }
+
+  function getPickupAddress(order: Order) {
+    return order.businessOrders?.find((current) => current.businessAddress)?.businessAddress ?? 'Direccion del negocio no disponible';
+  }
+
+  function getRouteDestination(order: Order, pickupLocation?: Coordinates, customerLocation?: Coordinates) {
+    if (order.status === 'ASSIGNED') {
+      return pickupLocation;
+    }
+
+    if (order.status === 'PICKED_UP' || order.status === 'ON_THE_WAY') {
+      return customerLocation;
+    }
+
+    return undefined;
+  }
+
+  function getRouteButtonLabel(order: Order) {
+    if (order.status === 'ASSIGNED') {
+      return 'Ruta al negocio';
+    }
+
+    if (order.status === 'PICKED_UP' || order.status === 'ON_THE_WAY') {
+      return 'Ruta al cliente';
+    }
+
+    return 'Abrir ruta sugerida';
+  }
+
   function renderOrder(item: ListedOrder) {
     const orderItems = item.items ?? item.businessOrders?.flatMap((order) => order.items ?? []) ?? [];
     const location = deliveryLocations[item.id];
     const customerLocation = location?.customer ?? undefined;
     const courierLocation = location?.courier ?? undefined;
-    const businessLocation =
-      item.businessLatitude && item.businessLongitude
-        ? {
-          latitude: Number(item.businessLatitude),
-          longitude: Number(item.businessLongitude),
-        }
-        : undefined;
+    const businessLocation = getPickupPoint(item);
+    const routeDestination = getRouteDestination(item, businessLocation, customerLocation);
     const nextLabel =
       item.status === 'ASSIGNED'
         ? 'Marcar recogido'
@@ -248,8 +288,8 @@ const HomeScreen: React.FC = () => {
             : '';
     const suggestedRoute = [
       courierLocation,
-      customerLocation,
-    ].filter(Boolean) as Array<{ latitude: number; longitude: number }>;
+      routeDestination,
+    ].filter(Boolean) as Coordinates[];
 
     return (
       <View style={styles.card}>
@@ -276,7 +316,8 @@ const HomeScreen: React.FC = () => {
             </Text>
           </View>
         </View>
-        <Text style={styles.orderMeta}>Direccion: {item.deliveryAddress}</Text>
+        <Text style={styles.orderMeta}>Recoger en: {getPickupAddress(item)}</Text>
+        <Text style={styles.orderMeta}>Entregar en: {item.deliveryAddress}</Text>
         {item.customerName ? <Text style={styles.orderMeta}>Cliente: {item.customerName}</Text> : null}
         {item.customerPhone && item.status !== 'DELIVERED' ? (
           <TouchableOpacity onPress={() => callCustomer(item.customerPhone!)} style={styles.phoneButton}>
@@ -316,12 +357,18 @@ const HomeScreen: React.FC = () => {
             {businessLocation ? (
               <Marker
                 coordinate={businessLocation}
-                title="Negocio"
+                title="Recoger en negocio"
+                description={getPickupAddress(item)}
                 pinColor="orange"
               />
             ) : null}
             {customerLocation ? (
-              <Marker coordinate={customerLocation} title="Cliente" />
+              <Marker
+                coordinate={customerLocation}
+                title="Entregar al cliente"
+                description={item.deliveryAddress}
+                pinColor="green"
+              />
             ) : null}
             {courierLocation ? (
               <Marker coordinate={courierLocation} title="Tu ubicacion" pinColor={colors.primary} />
@@ -332,12 +379,12 @@ const HomeScreen: React.FC = () => {
           </MapView>
         ) : null}
 
-        {item.listMode === 'assigned' && customerLocation ? (
+        {item.listMode === 'assigned' && routeDestination ? (
           <TouchableOpacity
-            onPress={() => openSuggestedRoute(customerLocation)}
+            onPress={() => openSuggestedRoute(routeDestination)}
             style={styles.routeButton}
           >
-            <Text style={styles.routeText}>Abrir ruta sugerida</Text>
+            <Text style={styles.routeText}>{getRouteButtonLabel(item)}</Text>
           </TouchableOpacity>
         ) : null}
 
