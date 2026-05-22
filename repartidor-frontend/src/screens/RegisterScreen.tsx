@@ -21,17 +21,19 @@ export default function RegisterScreen({ error, isLoading, onRegister, onBackToL
   const [formError, setFormError] = useState<string | null>(null);
 
   const validateForm = (): boolean => {
+    const normalizedEmail = email.trim().toLowerCase();
+
     if (!fullName.trim()) {
       setFormError('Nombre es requerido');
       return false;
     }
 
-    if (!email.trim()) {
+    if (!normalizedEmail) {
       setFormError('Correo es requerido');
       return false;
     }
 
-    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
       setFormError('Correo inválido');
       return false;
     }
@@ -60,11 +62,12 @@ export default function RegisterScreen({ error, isLoading, onRegister, onBackToL
       return;
     }
 
-    const username = email.split('@')[0].replace(/[^a-zA-Z0-9_.-]/g, '').toLowerCase();
+    const normalizedEmail = email.trim().toLowerCase();
+    const username = normalizedEmail.split('@')[0].replace(/[^a-zA-Z0-9_.-]/g, '').toLowerCase();
 
     onRegister({
-      fullName,
-      email,
+      fullName: fullName.trim(),
+      email: normalizedEmail,
       password,
       phone: phone.trim() || undefined,
       username: username.length >= 3 ? username : `${username || 'usuario'}${Date.now()}`,
