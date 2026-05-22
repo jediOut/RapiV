@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Alert,
   Image,
@@ -79,6 +79,7 @@ export function SettingsScreen({
   const [logoPreview, setLogoPreview] = useState(
     businessProfile.logo ?? ""
   );
+  const [showMapEditor, setShowMapEditor] = useState(false);
 
   const [paymentMode, setPaymentMode] =
     useState(
@@ -101,6 +102,26 @@ export function SettingsScreen({
       businessProfile.coordinates ??
         DEFAULT_COORDINATES
     );
+
+  useEffect(() => {
+    const nextCoordinates = businessProfile.coordinates ?? DEFAULT_COORDINATES;
+
+    setName(businessProfile.name ?? "");
+    setAddress(businessProfile.address ?? "");
+    setLogoPreview(businessProfile.logo ?? "");
+    setPaymentMode(businessProfile.paymentMode ?? "");
+    setAlertsEnabled(businessProfile.alertsEnabled ?? true);
+    setCoordinates(nextCoordinates);
+    setMarkerPosition(nextCoordinates);
+  }, [
+    businessProfile.name,
+    businessProfile.address,
+    businessProfile.logo,
+    businessProfile.paymentMode,
+    businessProfile.alertsEnabled,
+    businessProfile.coordinates?.latitude,
+    businessProfile.coordinates?.longitude
+  ]);
 
   function isInsideServiceArea(
     latitude: number,
@@ -267,6 +288,10 @@ export function SettingsScreen({
         nextCoordinates
       );
 
+      setCoordinates(
+        nextCoordinates
+      );
+
       mapRef.current?.animateToRegion(
         {
           latitude:
@@ -296,10 +321,19 @@ export function SettingsScreen({
   }
 
   function handleSave() {
+    if (!name.trim() || !address.trim()) {
+      Alert.alert(
+        "Datos incompletos",
+        "Nombre y direccion son obligatorios."
+      );
+
+      return;
+    }
+
     onSave({
-      name,
+      name: name.trim(),
       logo: businessProfile.logo ?? undefined,
-      address,
+      address: address.trim(),
       paymentMode,
       alertsEnabled,
       coordinates
@@ -448,6 +482,23 @@ export function SettingsScreen({
         </Pressable>
       </View>
 
+      <Text style={styles.locationSummary}>
+        {address || "Direccion del negocio no disponible"}
+      </Text>
+
+      <Pressable
+        style={styles.confirmButton}
+        onPress={() => setShowMapEditor((current) => !current)}
+      >
+        <Text
+          style={styles.confirmButtonText}
+        >
+          {showMapEditor ? "Ocultar mapa" : "Editar ubicacion en mapa"}
+        </Text>
+      </Pressable>
+
+      {showMapEditor ? (
+        <>
       <View style={styles.mapContainer}>
         <MapView
           ref={mapRef}
@@ -489,6 +540,8 @@ export function SettingsScreen({
           Confirmar ubicación actual
         </Text>
       </Pressable>
+        </>
+      ) : null}
 
       <Pressable
         style={[
@@ -641,6 +694,19 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 13,
     fontWeight: "700"
+  },
+
+  locationSummary: {
+    backgroundColor: colors.background,
+    borderColor: colors.border,
+    borderRadius: 12,
+    borderWidth: 1,
+    color: colors.textMuted,
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10
   },
 
   mapContainer: {
