@@ -16,6 +16,16 @@ export const authApi = {
     return apiClient.get<User>('/auth/me');
   },
 
+  async updateProfile(payload: {
+    fullName?: string;
+    username?: string;
+    email?: string;
+    phone?: string;
+    address?: string;
+  }): Promise<User> {
+    return apiClient.patch<User>('/auth/me', payload);
+  },
+
   async logout(): Promise<void> {
     await sessionStorage.clearSession();
   },

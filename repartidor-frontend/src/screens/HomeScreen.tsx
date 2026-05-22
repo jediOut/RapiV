@@ -7,6 +7,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -26,6 +27,7 @@ import {
   updateCourierAvailability,
 } from '../services/orderApi';
 import { sessionStorage } from '../services/sessionStorage';
+import { authApi } from '../services/authApi';
 import { Order } from '../types/business';
 import type { User } from '../types/auth';
 import { colors } from '../theme/colors';
@@ -66,6 +68,15 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
   const [refreshing, setRefreshing] = useState(false);
   const [mutatingOrderId, setMutatingOrderId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [profileForm, setProfileForm] = useState({
+    fullName: '',
+    username: '',
+    email: '',
+    phone: '',
+  });
 
   async function getToken() {
     const session = await sessionStorage.loadSession();
@@ -86,6 +97,14 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
 
       const currentUser = await sessionStorage.getUser();
       setUser(currentUser);
+      if (currentUser) {
+        setProfileForm({
+          fullName: currentUser.fullName ?? currentUser.name ?? '',
+          username: currentUser.username ?? '',
+          email: currentUser.email ?? '',
+          phone: currentUser.phone ?? '',
+        });
+      }
 
       const [offers, assigned] = await Promise.all([
         fetchDeliveryOffers(token),
@@ -272,6 +291,50 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
     }
 
     return 'Abrir ruta sugerida';
+  }
+
+  function updateProfileForm(key: keyof typeof profileForm, value: string) {
+    setProfileForm((current) => ({ ...current, [key]: value }));
+  }
+
+  async function handleSaveProfile() {
+    const normalizedEmail = profileForm.email.trim().toLowerCase();
+
+    if (!profileForm.fullName.trim() || !profileForm.username.trim() || !normalizedEmail) {
+      setProfileError('Nombre, usuario y correo son obligatorios.');
+      return;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setProfileError('Correo invalido.');
+      return;
+    }
+
+    setIsSavingProfile(true);
+    setProfileError(null);
+
+    try {
+      const updatedUser = await authApi.updateProfile({
+        fullName: profileForm.fullName.trim(),
+        username: profileForm.username.trim(),
+        email: normalizedEmail,
+        phone: profileForm.phone.trim(),
+      });
+
+      await sessionStorage.setUser(updatedUser);
+      setUser(updatedUser);
+      setProfileForm({
+        fullName: updatedUser.fullName ?? updatedUser.name ?? '',
+        username: updatedUser.username ?? '',
+        email: updatedUser.email ?? '',
+        phone: updatedUser.phone ?? '',
+      });
+      setIsEditingProfile(false);
+    } catch (saveError) {
+      setProfileError(saveError instanceof Error ? saveError.message : 'No se pudo actualizar el perfil.');
+    } finally {
+      setIsSavingProfile(false);
+    }
   }
 
   function renderOrder(item: ListedOrder) {
@@ -543,6 +606,38 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
             />
             <Text style={styles.availabilityText}>{isBusy ? 'En entrega activa' : 'Disponible'}</Text>
           </View>
+        </View>
+
+        <View style={styles.infoCard}>
+          <View style={styles.profileEditHeader}>
+            <Text style={styles.infoTitle}>Datos de perfil</Text>
+            <TouchableOpacity
+              disabled={isSavingProfile}
+              onPress={() => {
+                setIsEditingProfile((current) => !current);
+                setProfileError(null);
+              }}
+            >
+              <Text style={styles.editProfileText}>{isEditingProfile ? 'Cancelar' : 'Editar'}</Text>
+            </TouchableOpacity>
+          </View>
+          {isEditingProfile ? (
+            <View style={styles.profileForm}>
+              <TextInput value={profileForm.fullName} onChangeText={(value) => updateProfileForm('fullName', value)} placeholder="Nombre completo" placeholderTextColor={colors.muted} style={styles.profileInput} />
+              <TextInput value={profileForm.username} onChangeText={(value) => updateProfileForm('username', value)} autoCapitalize="none" placeholder="Usuario" placeholderTextColor={colors.muted} style={styles.profileInput} />
+              <TextInput value={profileForm.email} onChangeText={(value) => updateProfileForm('email', value)} autoCapitalize="none" keyboardType="email-address" placeholder="Correo" placeholderTextColor={colors.muted} style={styles.profileInput} />
+              <TextInput value={profileForm.phone} onChangeText={(value) => updateProfileForm('phone', value)} keyboardType="phone-pad" placeholder="Telefono" placeholderTextColor={colors.muted} style={styles.profileInput} />
+              {profileError ? <Text style={styles.profileError}>{profileError}</Text> : null}
+              <TouchableOpacity disabled={isSavingProfile} onPress={handleSaveProfile} style={[styles.saveProfileButton, isSavingProfile && styles.disabledButton]}>
+                <Text style={styles.saveProfileText}>{isSavingProfile ? 'Guardando...' : 'Guardar cambios'}</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <>
+              <Text style={styles.infoText}>Usuario: {user?.username ?? 'Sin usuario'}</Text>
+              <Text style={styles.infoText}>Telefono: {user?.phone ?? 'Sin telefono'}</Text>
+            </>
+          )}
         </View>
 
         <View style={styles.metricsGrid}>
@@ -911,6 +1006,46 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
     marginTop: 2,
+  },
+  profileEditHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  editProfileText: {
+    color: colors.primary,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  profileForm: {
+    gap: 10,
+  },
+  profileInput: {
+    backgroundColor: colors.background,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    color: colors.text,
+    fontSize: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+  },
+  profileError: {
+    color: '#B91C1C',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  saveProfileButton: {
+    alignItems: 'center',
+    backgroundColor: colors.primary,
+    borderRadius: 8,
+    paddingVertical: 12,
+  },
+  saveProfileText: {
+    color: colors.surface,
+    fontSize: 14,
+    fontWeight: '900',
   },
   logoutButton: {
     alignItems: 'center',

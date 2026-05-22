@@ -13,6 +13,14 @@ type CreateUserInput = {
   roles: UserRole[];
 };
 
+type UpdateUserInput = {
+  email?: string;
+  username?: string;
+  fullName?: string;
+  phone?: string;
+  address?: string;
+};
+
 @Injectable()
 export class UsersService {
   constructor(
@@ -43,7 +51,12 @@ export class UsersService {
       roles: input.roles,
     });
 
-    return this.userRepository.save(user);
+    try {
+      return await this.userRepository.save(user);
+    } catch (error) {
+      this.throwUniqueUserConflict(error);
+      throw error;
+    }
   }
 
   async findByEmail(email: string): Promise<User | null> {
@@ -82,7 +95,77 @@ export class UsersService {
     return user;
   }
 
+  async updateProfile(userId: string, input: UpdateUserInput): Promise<User> {
+    const user = await this.findById(userId);
+
+    if (input.email !== undefined) {
+      const normalizedEmail = input.email.toLowerCase().trim();
+      const existingByEmail = await this.findByEmail(normalizedEmail);
+
+      if (existingByEmail && existingByEmail.id !== userId) {
+        throw new ConflictException("Este correo ya esta registrado");
+      }
+
+      user.email = normalizedEmail;
+    }
+
+    if (input.username !== undefined) {
+      const normalizedUsername = this.normalizeUsername(input.username);
+      const existingByUsername = await this.findByUsername(normalizedUsername);
+
+      if (existingByUsername && existingByUsername.id !== userId) {
+        throw new ConflictException("Este nombre de usuario ya esta registrado");
+      }
+
+      user.username = normalizedUsername;
+    }
+
+    if (input.fullName !== undefined) {
+      user.fullName = input.fullName.trim();
+    }
+
+    if (input.phone !== undefined) {
+      user.phone = input.phone.trim() || undefined;
+    }
+
+    if (input.address !== undefined) {
+      user.address = input.address.trim() || undefined;
+    }
+
+    try {
+      return await this.userRepository.save(user);
+    } catch (error) {
+      this.throwUniqueUserConflict(error);
+      throw error;
+    }
+  }
+
   private normalizeUsername(username: string): string {
     return username.toLowerCase().trim();
+  }
+
+  private throwUniqueUserConflict(error: unknown): void {
+    if (
+      typeof error !== "object" ||
+      error === null ||
+      !("code" in error) ||
+      (error as { code?: string }).code !== "23505"
+    ) {
+      return;
+    }
+
+    const detail = "detail" in error && typeof (error as { detail?: unknown }).detail === "string"
+      ? (error as { detail: string }).detail
+      : "";
+
+    if (detail.includes("email")) {
+      throw new ConflictException("Este correo ya esta registrado");
+    }
+
+    if (detail.includes("username")) {
+      throw new ConflictException("Este nombre de usuario ya esta registrado");
+    }
+
+    throw new ConflictException("Ya existe un usuario con esos datos");
   }
 }

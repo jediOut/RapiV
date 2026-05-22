@@ -6,6 +6,7 @@ import { UsersService } from "../users/users.service";
 import type { User, UserRole } from "../users/user.entity";
 import type { LoginDto } from "./dto/login.dto";
 import type { RegisterDto } from "./dto/register.dto";
+import type { UpdateProfileDto } from "./dto/update-profile.dto";
 
 @Injectable()
 export class AuthService {
@@ -72,6 +73,16 @@ export class AuthService {
   async findSessionUser(userId: string) {
     const user = await this.usersService.findById(userId);
 
+    return this.toSessionUser(user);
+  }
+
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    const user = await this.usersService.updateProfile(userId, dto);
+
+    return this.toSessionUser(user);
+  }
+
+  private toSessionUser(user: User) {
     return {
       id: user.id,
       email: user.email,
