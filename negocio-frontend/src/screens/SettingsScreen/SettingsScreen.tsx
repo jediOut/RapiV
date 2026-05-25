@@ -3,7 +3,6 @@ import {
   Alert,
   Image,
   Pressable,
-  StyleSheet,
   Switch,
   Text,
   TextInput,
@@ -18,19 +17,27 @@ import MapView, {
 import * as Location from "expo-location";
 import * as ImagePicker from "expo-image-picker";
 
-import { colors } from "../theme/colors";
-
-type Coordinates = {
-  latitude: number;
-  longitude: number;
-};
+import { colors } from "../../theme/colors";
+import { styles } from "./SettingsScreen.styles";
+import {
+  DEFAULT_COORDINATES,
+  type Coordinates,
+  isInsideServiceArea
+} from "./SettingsScreen.logic";
 
 type BusinessProfile = {
   id?: string;
   name?: string;
   logo?: string | null;
   address?: string;
-  paymentMode?: string;
+  acceptsCash?: boolean;
+  acceptsCard?: boolean;
+  stripeConnectedAccountId?: string | null;
+  stripeChargesEnabled?: boolean;
+  stripePayoutsEnabled?: boolean;
+  stripeDetailsSubmitted?: boolean;
+  stripeRequirementsCurrentlyDue?: string[] | null;
+  minimumOrderItems?: number;
   alertsEnabled?: boolean;
   coordinates?: Coordinates;
 };
@@ -39,7 +46,9 @@ type UpdateBusinessPayload = {
   name: string;
   logo?: string;
   address: string;
-  paymentMode: string;
+  acceptsCash: boolean;
+  acceptsCard: boolean;
+  minimumOrderItems: number;
   alertsEnabled: boolean;
   coordinates: Coordinates;
 };
@@ -51,18 +60,17 @@ type SettingsScreenProps = {
   onSave: (
     payload: UpdateBusinessPayload
   ) => void;
-};
-
-const DEFAULT_COORDINATES = {
-  latitude: 20.0287,
-  longitude: -96.6473
+  onConnectStripe: () => void;
+  onRefreshStripeStatus: () => void;
 };
 
 export function SettingsScreen({
   businessProfile,
   isLoading,
   onUploadLogo,
-  onSave
+  onSave,
+  onConnectStripe,
+  onRefreshStripeStatus
 }: SettingsScreenProps) {
   const mapRef = useRef<MapView | null>(
     null
@@ -81,10 +89,17 @@ export function SettingsScreen({
   );
   const [showMapEditor, setShowMapEditor] = useState(false);
 
-  const [paymentMode, setPaymentMode] =
-    useState(
-      businessProfile.paymentMode ?? ""
-    );
+  const [acceptsCash, setAcceptsCash] = useState(businessProfile.acceptsCash ?? true);
+  const [acceptsCard, setAcceptsCard] = useState(
+    Boolean(
+      businessProfile.acceptsCard &&
+        businessProfile.stripeConnectedAccountId &&
+        businessProfile.stripeChargesEnabled
+    )
+  );
+  const [minimumOrderItems, setMinimumOrderItems] = useState(
+    String(businessProfile.minimumOrderItems ?? 1)
+  );
 
   const [alertsEnabled, setAlertsEnabled] =
     useState(
@@ -109,7 +124,15 @@ export function SettingsScreen({
     setName(businessProfile.name ?? "");
     setAddress(businessProfile.address ?? "");
     setLogoPreview(businessProfile.logo ?? "");
-    setPaymentMode(businessProfile.paymentMode ?? "");
+    setAcceptsCash(businessProfile.acceptsCash ?? true);
+    setAcceptsCard(
+      Boolean(
+        businessProfile.acceptsCard &&
+          businessProfile.stripeConnectedAccountId &&
+          businessProfile.stripeChargesEnabled
+      )
+    );
+    setMinimumOrderItems(String(businessProfile.minimumOrderItems ?? 1));
     setAlertsEnabled(businessProfile.alertsEnabled ?? true);
     setCoordinates(nextCoordinates);
     setMarkerPosition(nextCoordinates);
@@ -117,23 +140,30 @@ export function SettingsScreen({
     businessProfile.name,
     businessProfile.address,
     businessProfile.logo,
-    businessProfile.paymentMode,
+    businessProfile.acceptsCash,
+    businessProfile.acceptsCard,
+    businessProfile.stripeConnectedAccountId,
+    businessProfile.stripeChargesEnabled,
+    businessProfile.minimumOrderItems,
     businessProfile.alertsEnabled,
     businessProfile.coordinates?.latitude,
     businessProfile.coordinates?.longitude
   ]);
 
-  function isInsideServiceArea(
-    latitude: number,
-    longitude: number
-  ) {
-    return (
-      latitude >= 19.95 &&
-      latitude <= 20.10 &&
-      longitude >= -96.75 &&
-      longitude <= -96.55
-    );
-  }
+  const stripeReady = Boolean(
+    businessProfile.stripeConnectedAccountId &&
+      businessProfile.stripeChargesEnabled
+  );
+
+  const stripeStatusLabel = stripeReady
+    ? "Listo para recibir pagos con tarjeta"
+    : businessProfile.stripeConnectedAccountId
+      ? "Configuracion pendiente en Stripe"
+      : "Stripe Connect no configurado";
+
+  const stripeStatusDescription = stripeReady
+    ? "Puedes activar tarjeta como metodo de pago."
+    : "Completa Stripe Connect para activar pagos con tarjeta. Los datos bancarios se capturan directamente en Stripe.";
 
   async function resolveAddress(
     latitude: number,
@@ -330,11 +360,28 @@ export function SettingsScreen({
       return;
     }
 
+    const minimumItems = Math.max(1, Math.floor(Number(minimumOrderItems)));
+
+    if (acceptsCard && !stripeReady) {
+      Alert.alert(
+        "Stripe Connect pendiente",
+        "Configura Stripe Connect antes de aceptar pagos con tarjeta."
+      );
+      return;
+    }
+
+    if (!acceptsCash && !acceptsCard) {
+      Alert.alert("Metodo de pago requerido", "Activa efectivo, tarjeta o ambos.");
+      return;
+    }
+
     onSave({
       name: name.trim(),
       logo: businessProfile.logo ?? undefined,
       address: address.trim(),
-      paymentMode,
+      acceptsCash,
+      acceptsCard,
+      minimumOrderItems: Number.isFinite(minimumItems) ? minimumItems : 1,
       alertsEnabled,
       coordinates
     });
@@ -418,18 +465,90 @@ export function SettingsScreen({
 
       <View style={styles.field}>
         <Text style={styles.label}>
-          Método de pago
+          Metodos de pago aceptados
+        </Text>
+        <View style={styles.stripePanel}>
+          <Text style={styles.stripeStatus}>
+            {stripeStatusLabel}
+          </Text>
+          <Text style={styles.stripeDescription}>
+            {stripeStatusDescription}
+          </Text>
+          <View style={styles.stripeActions}>
+            <Pressable
+              disabled={isLoading}
+              onPress={onConnectStripe}
+              style={styles.stripeButton}
+            >
+              <Text style={styles.stripeButtonText}>
+                {businessProfile.stripeConnectedAccountId ? "Continuar Stripe" : "Configurar Stripe"}
+              </Text>
+            </Pressable>
+            <Pressable
+              disabled={isLoading || !businessProfile.stripeConnectedAccountId}
+              onPress={onRefreshStripeStatus}
+              style={[
+                styles.stripeButtonSecondary,
+                (!businessProfile.stripeConnectedAccountId || isLoading) &&
+                  styles.stripeButtonDisabled
+              ]}
+            >
+              <Text style={styles.stripeButtonSecondaryText}>
+                Actualizar estado
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+        <View style={styles.paymentOptions}>
+          <Pressable
+            onPress={() => setAcceptsCash((current) => !current)}
+            style={[styles.paymentOption, acceptsCash && styles.paymentOptionActive]}
+          >
+            <Text style={[styles.paymentOptionText, acceptsCash && styles.paymentOptionTextActive]}>
+              Efectivo
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              if (!stripeReady) {
+                setAcceptsCard(false);
+                Alert.alert(
+                  "Stripe Connect pendiente",
+                  "Completa Stripe Connect antes de activar pagos con tarjeta."
+                );
+                return;
+              }
+
+              setAcceptsCard((current) => !current);
+            }}
+            style={[
+              styles.paymentOption,
+              acceptsCard && styles.paymentOptionActive,
+              !stripeReady && styles.paymentOptionDisabled
+            ]}
+          >
+            <Text style={[
+              styles.paymentOptionText,
+              acceptsCard && styles.paymentOptionTextActive,
+              !stripeReady && styles.paymentOptionTextDisabled
+            ]}>
+              Tarjeta
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+
+      <View style={styles.field}>
+        <Text style={styles.label}>
+          Minimo de productos por pedido
         </Text>
 
         <TextInput
-          value={paymentMode}
-          onChangeText={
-            setPaymentMode
-          }
-          placeholder="Efectivo, transferencia..."
-          placeholderTextColor={
-            colors.textMuted
-          }
+          value={minimumOrderItems}
+          onChangeText={setMinimumOrderItems}
+          keyboardType="number-pad"
+          placeholder="1"
+          placeholderTextColor={colors.textMuted}
           style={styles.input}
         />
       </View>
@@ -563,210 +682,3 @@ export function SettingsScreen({
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  panel: {
-    backgroundColor:
-      colors.surface,
-    borderColor: colors.border,
-    borderRadius: 14,
-    borderWidth: 1,
-    marginBottom: 16,
-    padding: 16
-  },
-
-  sectionTitle: {
-    color: colors.text,
-    fontSize: 22,
-    fontWeight: "800",
-    marginBottom: 20
-  },
-
-  field: {
-    marginBottom: 18
-  },
-
-  logoRow: {
-    alignItems: "center",
-    borderColor: colors.border,
-    borderRadius: 12,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 12,
-    marginBottom: 18,
-    padding: 12
-  },
-
-  logoPreview: {
-    borderRadius: 12,
-    height: 64,
-    width: 64
-  },
-
-  logoPlaceholder: {
-    alignItems: "center",
-    backgroundColor: colors.primaryLight,
-    borderRadius: 12,
-    height: 64,
-    justifyContent: "center",
-    width: 64
-  },
-
-  logoPlaceholderText: {
-    color: colors.primary,
-    fontSize: 26,
-    fontWeight: "900"
-  },
-
-  logoContent: {
-    flex: 1
-  },
-
-  logoButton: {
-    backgroundColor: colors.primaryLight,
-    borderColor: colors.primaryBorder,
-    borderRadius: 10,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 10
-  },
-
-  logoButtonText: {
-    color: colors.primary,
-    fontSize: 13,
-    fontWeight: "800"
-  },
-
-  label: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: "700",
-    marginBottom: 8
-  },
-
-  input: {
-    backgroundColor:
-      colors.background,
-    borderColor: colors.border,
-    borderRadius: 12,
-    borderWidth: 1,
-    color: colors.text,
-    fontSize: 15,
-    paddingHorizontal: 14,
-    paddingVertical: 12
-  },
-
-  textArea: {
-    minHeight: 90,
-    textAlignVertical: "top"
-  },
-
-  switchContainer: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent:
-      "space-between",
-    marginBottom: 22
-  },
-
-  switchDescription: {
-    color: colors.textMuted,
-    fontSize: 13
-  },
-
-  mapHeader: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent:
-      "space-between",
-    marginBottom: 10
-  },
-
-  locationButton: {
-    backgroundColor:
-      colors.primary,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10
-  },
-
-  locationButtonText: {
-    color: "#fff",
-    fontSize: 13,
-    fontWeight: "700"
-  },
-
-  locationSummary: {
-    backgroundColor: colors.background,
-    borderColor: colors.border,
-    borderRadius: 12,
-    borderWidth: 1,
-    color: colors.textMuted,
-    fontSize: 13,
-    lineHeight: 18,
-    marginBottom: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10
-  },
-
-  mapContainer: {
-    borderRadius: 14,
-    height: 260,
-    marginBottom: 14,
-    overflow: "hidden",
-    position: "relative"
-  },
-
-  map: {
-    flex: 1
-  },
-
-  centerMarker: {
-    alignItems: "center",
-    justifyContent: "center",
-    left: "50%",
-    marginLeft: -18,
-    marginTop: -36,
-    position: "absolute",
-    top: "50%"
-  },
-
-  centerMarkerIcon: {
-    fontSize: 36
-  },
-
-  confirmButton: {
-    alignItems: "center",
-    backgroundColor:
-      colors.background,
-    borderColor: colors.border,
-    borderRadius: 12,
-    borderWidth: 1,
-    marginBottom: 18,
-    paddingVertical: 14
-  },
-
-  confirmButtonText: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: "800"
-  },
-
-  saveButton: {
-    alignItems: "center",
-    backgroundColor:
-      colors.primary,
-    borderRadius: 12,
-    paddingVertical: 15
-  },
-
-  saveButtonDisabled: {
-    opacity: 0.6
-  },
-
-  saveButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "800"
-  }
-});

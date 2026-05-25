@@ -36,6 +36,9 @@ export async function updateBusiness(
     longitude?: number;
     isOpen?: boolean;
     logo?: string;
+    acceptsCash?: boolean;
+    acceptsCard?: boolean;
+    minimumOrderItems?: number;
   }
 ): Promise<Business> {
   const body: Record<string, unknown> = {};
@@ -67,6 +70,18 @@ export async function updateBusiness(
     body.logo = payload.logo;
   }
 
+  if (payload.acceptsCash !== undefined) {
+    body.acceptsCash = payload.acceptsCash;
+  }
+
+  if (payload.acceptsCard !== undefined) {
+    body.acceptsCard = payload.acceptsCard;
+  }
+
+  if (payload.minimumOrderItems !== undefined) {
+    body.minimumOrderItems = payload.minimumOrderItems;
+  }
+
   return apiRequest<Business>(`/businesses/${businessId}`, {
     method: "PATCH",
     token,
@@ -74,6 +89,38 @@ export async function updateBusiness(
   });
 }
 
+export async function createStripeConnectAccount(
+  token: string,
+  businessId: string
+): Promise<Business> {
+  return apiRequest<Business>(`/businesses/${businessId}/stripe/connect-account`, {
+    method: "POST",
+    token
+  });
+}
+
+export async function createStripeOnboardingLink(
+  token: string,
+  businessId: string
+): Promise<{ url: string; business: Business }> {
+  return apiRequest<{ url: string; business: Business }>(
+    `/businesses/${businessId}/stripe/onboarding-link`,
+    {
+      method: "POST",
+      token
+    }
+  );
+}
+
+export async function refreshStripeConnectStatus(
+  token: string,
+  businessId: string
+): Promise<Business> {
+  return apiRequest<Business>(`/businesses/${businessId}/stripe/refresh-status`, {
+    method: "POST",
+    token
+  });
+}
 
 export async function fetchBusinessProducts(
   token: string,

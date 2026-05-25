@@ -20,6 +20,30 @@ export class BusinessesController {
     return this.businessesService.findByOwner(user.sub);
   }
 
+  @Post(":id/stripe/connect-account")
+  async createStripeConnectAccount(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", new ParseUUIDPipe()) id: string
+  ) {
+    return this.businessesService.createStripeConnectAccount(user.sub, id);
+  }
+
+  @Post(":id/stripe/onboarding-link")
+  async createStripeOnboardingLink(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", new ParseUUIDPipe()) id: string
+  ) {
+    return this.businessesService.createStripeOnboardingLink(user.sub, id);
+  }
+
+  @Post(":id/stripe/refresh-status")
+  async refreshStripeConnectStatus(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("id", new ParseUUIDPipe()) id: string
+  ) {
+    return this.businessesService.refreshStripeConnectStatus(user.sub, id);
+  }
+
   @Get(":id")
   async findOne(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.businessesService.findById(id);

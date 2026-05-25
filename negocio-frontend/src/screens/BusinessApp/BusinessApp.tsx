@@ -1,76 +1,49 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Linking, ScrollView, Text, View } from "react-native";
 
-import { Header } from "../components/Header";
-import { StateView } from "../components/StateView";
-import { TabBar } from "../components/TabBar";
+import { Header } from "../../components/Header";
+import { StateView } from "../../components/StateView";
+import { TabBar } from "../../components/TabBar";
 
 import {
   createBusiness,
   createBusinessProduct,
+  createStripeOnboardingLink,
   fetchBusinessProducts,
   fetchMyBusinesses,
+  refreshStripeConnectStatus,
   updateBusiness,
   updateBusinessProduct,
   updateProductAvailability
-} from "../services/businessApi";
-import { createMediaUploadUrl, uploadImageToS3 } from "../services/mediaApi";
+} from "../../services/businessApi";
+import { createMediaUploadUrl, uploadImageToS3 } from "../../services/mediaApi";
 import type { ImagePickerAsset } from "expo-image-picker";
 
 import {
   fetchBusinessOrders,
   updateBusinessOrderStatus
-} from "../services/orderApi";
+} from "../../services/orderApi";
 
-import { colors } from "../theme/colors";
-
-import type { AuthSession } from "../types/auth";
+import type { AuthSession } from "../../types/auth";
 
 import type {
   Business,
   BusinessOrder,
   CreateProductPayload,
   Product
-} from "../types/business";
+} from "../../types/business";
 
 import type {
   BusinessScreen,
-  TabItem
-} from "../types/navigation";
+} from "../../types/navigation";
 
-import { BusinessProfileRequiredScreen } from "./BusinessProfileRequiredScreen";
-import { HomeScreen } from "./HomeScreen";
-import { MenuScreen } from "./MenuScreen";
-import { OrdersScreen } from "./OrdersScreen";
-import { SettingsScreen } from "./SettingsScreen";
-
-const tabs: TabItem[] = [
-  {
-    key: "home",
-    label: "Inicio",
-    icon: "grid-outline"
-  },
-  {
-    key: "orders",
-    label: "Pedidos",
-    icon: "receipt-outline"
-  },
-  {
-    key: "menu",
-    label: "Menu",
-    icon: "restaurant-outline"
-  },
-  {
-    key: "settings",
-    label: "Ajustes",
-    icon: "settings-outline"
-  }
-];
-
-function toFiniteNumber(value: unknown, fallback: number) {
-  const numericValue = Number(value);
-  return Number.isFinite(numericValue) ? numericValue : fallback;
-}
+import { BusinessProfileRequiredScreen } from "../BusinessProfileRequiredScreen";
+import { HomeScreen } from "../HomeScreen";
+import { MenuScreen } from "../MenuScreen";
+import { OrdersScreen } from "../OrdersScreen";
+import { SettingsScreen } from "../SettingsScreen";
+import { styles } from "./BusinessApp.styles";
+import { businessTabs, toFiniteNumber } from "./BusinessApp.logic";
 
 type BusinessAppProps = {
   session: AuthSession;
@@ -146,8 +119,29 @@ export function BusinessApp({
       selectedBusiness?.address ||
       "",
 
-    paymentMode:
-      "Efectivo al inicio",
+    acceptsCash:
+      selectedBusiness?.acceptsCash ?? true,
+
+    acceptsCard:
+      selectedBusiness?.acceptsCard ?? true,
+
+    stripeConnectedAccountId:
+      selectedBusiness?.stripeConnectedAccountId,
+
+    stripeChargesEnabled:
+      selectedBusiness?.stripeChargesEnabled ?? false,
+
+    stripePayoutsEnabled:
+      selectedBusiness?.stripePayoutsEnabled ?? false,
+
+    stripeDetailsSubmitted:
+      selectedBusiness?.stripeDetailsSubmitted ?? false,
+
+    stripeRequirementsCurrentlyDue:
+      selectedBusiness?.stripeRequirementsCurrentlyDue ?? null,
+
+    minimumOrderItems:
+      selectedBusiness?.minimumOrderItems ?? 1,
 
     alertsEnabled: true,
 
@@ -349,7 +343,16 @@ export function BusinessApp({
               toFiniteNumber(payload.coordinates?.longitude, selectedBusiness.longitude ?? -96.6473),
 
             logo:
-              payload.logo
+              payload.logo,
+
+            acceptsCash:
+              payload.acceptsCash,
+
+            acceptsCard:
+              payload.acceptsCard,
+
+            minimumOrderItems:
+              payload.minimumOrderItems
           }
         );
 
@@ -378,6 +381,75 @@ export function BusinessApp({
       setIsUpdatingBusiness(
         false
       );
+    }
+  }
+
+  async function handleConnectStripe() {
+    if (!selectedBusiness) {
+      return;
+    }
+
+    try {
+      setIsUpdatingBusiness(true);
+      setBusinessError(null);
+
+      const response = await createStripeOnboardingLink(
+        session.accessToken,
+        selectedBusiness.id
+      );
+
+      setSelectedBusiness(response.business);
+
+      const canOpen = await Linking.canOpenURL(response.url);
+
+      if (!canOpen) {
+        throw new Error("No se pudo abrir Stripe en este dispositivo");
+      }
+
+      await Linking.openURL(response.url);
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "No se pudo iniciar la configuracion de Stripe";
+
+      setBusinessError(message);
+      Alert.alert("Stripe Connect", message);
+    } finally {
+      setIsUpdatingBusiness(false);
+    }
+  }
+
+  async function handleRefreshStripeStatus() {
+    if (!selectedBusiness) {
+      return;
+    }
+
+    try {
+      setIsUpdatingBusiness(true);
+      setBusinessError(null);
+
+      const updatedBusiness = await refreshStripeConnectStatus(
+        session.accessToken,
+        selectedBusiness.id
+      );
+
+      setSelectedBusiness(updatedBusiness);
+
+      Alert.alert(
+        "Stripe Connect",
+        updatedBusiness.stripeChargesEnabled
+          ? "Tu negocio ya puede aceptar pagos con tarjeta."
+          : "Tu configuracion de Stripe aun esta pendiente."
+      );
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "No se pudo actualizar el estado de Stripe";
+
+      setBusinessError(message);
+      Alert.alert("Stripe Connect", message);
+    } finally {
+      setIsUpdatingBusiness(false);
     }
   }
 
@@ -829,6 +901,12 @@ export function BusinessApp({
             onSave={
               handleUpdateBusiness
             }
+            onConnectStripe={
+              handleConnectStripe
+            }
+            onRefreshStripeStatus={
+              handleRefreshStripeStatus
+            }
             onUploadLogo={
               handleUploadBusinessLogo
             }
@@ -839,25 +917,8 @@ export function BusinessApp({
       <TabBar
         activeScreen={screen}
         onChange={setScreen}
-        tabs={tabs}
+        tabs={businessTabs}
       />
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  appShell: {
-    backgroundColor:
-      colors.background,
-    flex: 1
-  },
-
-  content: {
-    flex: 1
-  },
-
-  contentInner: {
-    padding: 18,
-    paddingBottom: 110
-  }
-});

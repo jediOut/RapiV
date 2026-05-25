@@ -17,4 +17,5 @@ Required environment variables:
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
 - `PUBLIC_APP_URL`, used to build Checkout success and cancel redirect URLs
+- `BUSINESS_APP_URL`, used to build Stripe Connect onboarding return and refresh URLs
 - `RAPIV_PLATFORM_FEE_BPS`, optional platform fee in basis points, for example `1000` for 10%

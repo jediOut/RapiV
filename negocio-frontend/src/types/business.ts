@@ -23,7 +23,14 @@ export type BusinessProfile = {
   name?: string;
   logo?: string | null;
   address?: string;
-  paymentMode?: string;
+  acceptsCash?: boolean;
+  acceptsCard?: boolean;
+  stripeConnectedAccountId?: string | null;
+  stripeChargesEnabled?: boolean;
+  stripePayoutsEnabled?: boolean;
+  stripeDetailsSubmitted?: boolean;
+  stripeRequirementsCurrentlyDue?: string[] | null;
+  minimumOrderItems?: number;
   alertsEnabled?: boolean;
   coordinates?: Coordinates;
 };
@@ -33,7 +40,9 @@ export type UpdateBusinessPayload = {
   name: string;
   logo?: string;
   address: string;
-  paymentMode: string;
+  acceptsCash: boolean;
+  acceptsCard: boolean;
+  minimumOrderItems: number;
   alertsEnabled: boolean;
   coordinates: Coordinates;
 };

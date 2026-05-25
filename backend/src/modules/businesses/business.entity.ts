@@ -59,6 +59,15 @@ export class Business {
   @Column({ type: 'boolean', default: false })
   stripeChargesEnabled!: boolean;
 
+  @Column({ type: 'boolean', default: false })
+  stripePayoutsEnabled!: boolean;
+
+  @Column({ type: 'boolean', default: false })
+  stripeDetailsSubmitted!: boolean;
+
+  @Column({ type: 'jsonb', nullable: true })
+  stripeRequirementsCurrentlyDue?: string[] | null;
+
   @Column({ type: 'int', default: 1 })
   minimumOrderItems!: number;
 

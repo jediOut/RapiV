@@ -33,14 +33,6 @@ export class CreateBusinessDto {
   acceptsCard?: boolean;
 
   @IsOptional()
-  @IsString()
-  stripeConnectedAccountId?: string;
-
-  @IsOptional()
-  @IsBoolean()
-  stripeChargesEnabled?: boolean;
-
-  @IsOptional()
   @IsInt()
   @Min(1)
   minimumOrderItems?: number;

@@ -40,14 +40,6 @@ export class UpdateBusinessDto implements Partial<CreateBusinessPayload> {
   acceptsCard?: boolean;
 
   @IsOptional()
-  @IsString()
-  stripeConnectedAccountId?: string;
-
-  @IsOptional()
-  @IsBoolean()
-  stripeChargesEnabled?: boolean;
-
-  @IsOptional()
   @IsInt()
   @Min(1)
   minimumOrderItems?: number;
