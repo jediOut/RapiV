@@ -39,13 +39,28 @@ export class Business {
   longitude?: number;
 
   @Column({ type: 'decimal', precision: 3, scale: 2, nullable: true })
-  rating?: number;
+  rating?: number | null;
 
   @Column({ type: 'int', nullable: true })
   deliveryTime?: number;
 
   @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
   minimumOrder?: number;
+
+  @Column({ type: 'boolean', default: true })
+  acceptsCash!: boolean;
+
+  @Column({ type: 'boolean', default: true })
+  acceptsCard!: boolean;
+
+  @Column({ type: 'varchar', nullable: true })
+  stripeConnectedAccountId?: string | null;
+
+  @Column({ type: 'boolean', default: false })
+  stripeChargesEnabled!: boolean;
+
+  @Column({ type: 'int', default: 1 })
+  minimumOrderItems!: number;
 
   @Column({ type: 'boolean', default: true })
   isOpen!: boolean;
@@ -66,4 +81,3 @@ export class Business {
   @OneToMany(() => Order, (order) => order.business)
   orders?: Order[];
 }
-

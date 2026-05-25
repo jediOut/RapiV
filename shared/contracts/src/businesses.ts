@@ -13,8 +13,14 @@ export type Business = {
   latitude?: number | null;
   longitude?: number | null;
   rating?: number | null;
+  ratingCount?: number;
   deliveryTime?: number | null;
   minimumOrder?: number | null;
+  acceptsCash?: boolean;
+  acceptsCard?: boolean;
+  stripeConnectedAccountId?: string | null;
+  stripeChargesEnabled?: boolean;
+  minimumOrderItems?: number;
   isOpen?: boolean;
   createdAt?: string | Date;
   updatedAt?: string | Date;
@@ -26,4 +32,9 @@ export type CreateBusinessPayload = {
   latitude?: number;
   longitude?: number;
   logo?: string;
+  acceptsCash?: boolean;
+  acceptsCard?: boolean;
+  stripeConnectedAccountId?: string;
+  stripeChargesEnabled?: boolean;
+  minimumOrderItems?: number;
 };

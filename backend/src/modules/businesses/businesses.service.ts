@@ -36,6 +36,11 @@ export class BusinessesService {
         logo: dto.logo?.trim(),
         latitude: dto.latitude,
         longitude: dto.longitude,
+        acceptsCash: dto.acceptsCash ?? true,
+        acceptsCard: dto.acceptsCard ?? true,
+        stripeConnectedAccountId: dto.stripeConnectedAccountId?.trim(),
+        stripeChargesEnabled: dto.stripeChargesEnabled ?? false,
+        minimumOrderItems: dto.minimumOrderItems ?? 1,
         isOpen: true
       });
 
@@ -103,6 +108,26 @@ export class BusinessesService {
 
     if (dto.isOpen !== undefined) {
       business.isOpen = dto.isOpen;
+    }
+
+    if (dto.acceptsCash !== undefined) {
+      business.acceptsCash = dto.acceptsCash;
+    }
+
+    if (dto.acceptsCard !== undefined) {
+      business.acceptsCard = dto.acceptsCard;
+    }
+
+    if (dto.stripeConnectedAccountId !== undefined) {
+      business.stripeConnectedAccountId = dto.stripeConnectedAccountId.trim();
+    }
+
+    if (dto.stripeChargesEnabled !== undefined) {
+      business.stripeChargesEnabled = dto.stripeChargesEnabled;
+    }
+
+    if (dto.minimumOrderItems !== undefined) {
+      business.minimumOrderItems = dto.minimumOrderItems;
     }
 
     return this.businessRepository.save(business);

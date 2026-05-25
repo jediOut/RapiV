@@ -44,13 +44,14 @@ export class PaymentsController {
   @Post("webhooks/provider")
   receiveWebhook(
     @Headers("x-payment-signature") signature: string | undefined,
+    @Headers("stripe-signature") stripeSignature: string | undefined,
     @Headers("x-signature") mercadoPagoSignature: string | undefined,
     @Headers("x-request-id") mercadoPagoRequestId: string | undefined,
     @Req() request: RawBodyRequest,
     @Body() dto: PaymentWebhookDto
   ) {
     return this.paymentsService.receiveWebhook(
-      signature ?? mercadoPagoSignature,
+      signature ?? stripeSignature ?? mercadoPagoSignature,
       request.rawBody,
       dto,
       mercadoPagoRequestId

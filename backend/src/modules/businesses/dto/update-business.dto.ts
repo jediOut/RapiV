@@ -1,5 +1,5 @@
 import { Type } from "class-transformer";
-import { IsBoolean, IsNumber, IsOptional, IsString, MinLength } from "class-validator";
+import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, Min, MinLength } from "class-validator";
 import type { CreateBusinessPayload } from "@rapidin/contracts";
 
 export class UpdateBusinessDto implements Partial<CreateBusinessPayload> {
@@ -30,4 +30,25 @@ export class UpdateBusinessDto implements Partial<CreateBusinessPayload> {
   @IsOptional()
   @IsString()
   logo?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  acceptsCash?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  acceptsCard?: boolean;
+
+  @IsOptional()
+  @IsString()
+  stripeConnectedAccountId?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  stripeChargesEnabled?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  minimumOrderItems?: number;
 }

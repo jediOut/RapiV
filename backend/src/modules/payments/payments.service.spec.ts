@@ -25,7 +25,17 @@ function createPayment(overrides: Partial<Payment> = {}): Payment {
     provider: "sandbox",
     providerPaymentId: "pay_1",
     idempotencyKey: "payment-key-1",
-    providerMetadata: {},
+    providerMetadata: {
+      transferSplits: [
+        {
+          businessId: "business-1",
+          connectedAccountId: "acct_123",
+          grossAmountCents: 2400,
+          platformFeeCents: 0,
+          transferAmountCents: 2400
+        }
+      ]
+    },
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides
@@ -54,6 +64,7 @@ function createService(options: {
   payments?: Payment[];
   events?: PaymentEvent[];
   orders?: Order[];
+  businesses?: Array<{ id: string; stripeConnectedAccountId?: string; stripeChargesEnabled?: boolean }>;
 } = {}) {
   const payments = options.payments ?? [];
   const events = options.events ?? [];
@@ -68,6 +79,13 @@ function createService(options: {
       }
     ] as Order[]);
   const queuedEventIds: string[] = [];
+  const businesses = options.businesses ?? [
+    {
+      id: "business-1",
+      stripeConnectedAccountId: "acct_123",
+      stripeChargesEnabled: true
+    }
+  ];
 
   const matches = <T>(entity: T, where: Partial<T>) =>
     Object.entries(where).every(
@@ -149,6 +167,12 @@ function createService(options: {
     }
   };
 
+  const businessRepository = {
+    async find() {
+      return businesses;
+    }
+  };
+
   const manager = {
     async findOne(entity: unknown, options: { where: Record<string, unknown> }) {
       if (entity === Payment) {
@@ -190,7 +214,16 @@ function createService(options: {
         customerId,
         totalCents: 2400,
         status: "PENDING",
-        businessOrders: [],
+        businessOrders: [
+          {
+            id: "order-1",
+            orderGroupId,
+            businessId: "business-1",
+            status: "PENDING",
+            items: [],
+            subtotalCents: 2400
+          }
+        ],
         deliveryAddress: "Calle 1",
         createdAt: new Date()
       };
@@ -216,11 +249,22 @@ function createService(options: {
       return {
         providerPaymentId,
         externalReference: "payment-1",
-        status: "approved",
+        status: "paid",
         amountCents: 2400,
         currency: "MXN",
-        raw: { id: providerPaymentId, status: "approved" }
+        latestChargeId: "ch_1",
+        raw: { id: providerPaymentId, status: "complete", payment_status: "paid" }
       };
+    },
+    async createTransfersForPayment() {
+      return [
+        {
+          businessId: "business-1",
+          connectedAccountId: "acct_123",
+          providerTransferId: "tr_1",
+          amountCents: 2400
+        }
+      ];
     }
   };
 
@@ -233,6 +277,7 @@ function createService(options: {
   const service = new PaymentsService(
     paymentRepository as never,
     paymentEventRepository as never,
+    businessRepository as never,
     dataSource as never,
     ordersService as never,
     providerService as never,
@@ -251,15 +296,28 @@ function signedBody(body: object) {
   return { rawBody, signature: `sha256=${signature}` };
 }
 
+function signedStripeBody(body: object) {
+  const rawBody = Buffer.from(JSON.stringify(body));
+  const timestamp = "1700000000";
+  const signature = createHmac("sha256", process.env.STRIPE_WEBHOOK_SECRET ?? "")
+    .update(Buffer.from(`${timestamp}.${rawBody.toString("utf8")}`))
+    .digest("hex");
+
+  return { rawBody, signature: `t=${timestamp},v1=${signature}` };
+}
+
 describe("PaymentsService", () => {
   const originalWebhookSecret = process.env.PAYMENT_WEBHOOK_SECRET;
+  const originalStripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
   beforeEach(() => {
     process.env.PAYMENT_WEBHOOK_SECRET = "test-secret";
+    delete process.env.STRIPE_WEBHOOK_SECRET;
   });
 
   afterEach(() => {
     process.env.PAYMENT_WEBHOOK_SECRET = originalWebhookSecret;
+    process.env.STRIPE_WEBHOOK_SECRET = originalStripeWebhookSecret;
   });
 
   it("requires an idempotency key when creating a payment", async () => {
@@ -347,6 +405,30 @@ describe("PaymentsService", () => {
     assert.deepEqual(queuedEventIds, ["event-1"]);
   });
 
+  it("accepts Stripe signed checkout session webhooks", async () => {
+    process.env.STRIPE_WEBHOOK_SECRET = "stripe-secret";
+    const { service, queuedEventIds } = createService();
+    const body = {
+      id: "evt_1",
+      object: "event",
+      type: "checkout.session.completed" as const,
+      data: {
+        object: {
+          id: "cs_test_1",
+          client_reference_id: "payment-1",
+          payment_status: "paid",
+          status: "complete"
+        }
+      }
+    };
+    const { rawBody, signature } = signedStripeBody(body);
+
+    const response = await service.receiveWebhook(signature, rawBody, body);
+
+    assert.deepEqual(response, { received: true, duplicate: false });
+    assert.deepEqual(queuedEventIds, ["event-1"]);
+  });
+
   it("processes succeeded webhooks in the worker and marks orders paid", async () => {
     const payment = createPayment();
     const event = createEvent();
@@ -359,9 +441,10 @@ describe("PaymentsService", () => {
 
     assert.equal(payment.status, "SUCCEEDED");
     assert.ok(payment.paidAt);
-    assert.equal(payment.providerMetadata?.mercadoPagoPaymentId, "pay_1");
-    assert.equal(payment.providerMetadata?.mercadoPagoStatus, "approved");
-    assert.equal(payment.providerMetadata?.mercadoPagoPayment, undefined);
+    assert.equal(payment.providerMetadata?.stripeCheckoutSessionId, "pay_1");
+    assert.equal(payment.providerMetadata?.stripeStatus, "paid");
+    assert.equal(payment.providerMetadata?.stripeLatestChargeId, "ch_1");
+    assert.equal(Array.isArray(payment.providerMetadata?.stripeTransfers), true);
     assert.equal(orders[0].paymentStatus, "PAID");
     assert.equal(orders[0].paidAt, payment.paidAt);
     assert.equal(events[0].status, "PROCESSED");

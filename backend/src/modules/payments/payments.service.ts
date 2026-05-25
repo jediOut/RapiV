@@ -11,12 +11,13 @@ import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { DataSource, Repository } from "typeorm";
 import { In } from "typeorm";
 
+import { Business } from "../businesses/business.entity";
 import { Order } from "../orders/order.entity";
 import { OrdersService } from "../orders/orders.service";
 import { CreatePaymentDto } from "./dto/create-payment.dto";
 import { PaymentWebhookDto } from "./dto/payment-webhook.dto";
 import { PaymentEvent } from "./payment-event.entity";
-import { PaymentProviderService } from "./payment-provider.service";
+import { PaymentProviderService, PaymentSplit } from "./payment-provider.service";
 import { PaymentProcessingQueue } from "./payment-processing.queue";
 import { Payment, PaymentStatus } from "./payment.entity";
 import { MonitoringService } from "../monitoring/monitoring.service";
@@ -40,6 +41,8 @@ export class PaymentsService {
     private readonly paymentRepository: Repository<Payment>,
     @InjectRepository(PaymentEvent)
     private readonly paymentEventRepository: Repository<PaymentEvent>,
+    @InjectRepository(Business)
+    private readonly businessRepository: Repository<Business>,
     private readonly dataSource: DataSource,
     private readonly ordersService: OrdersService,
     private readonly providerService: PaymentProviderService,
@@ -76,6 +79,10 @@ export class PaymentsService {
       throw new ForbiddenException("Only the customer can pay this order");
     }
 
+    if (orderGroup.paymentMethod === "CASH") {
+      throw new ConflictException("This order will be paid in cash");
+    }
+
     const amountCents = Number(orderGroup.totalCents);
 
     if (!Number.isInteger(amountCents) || amountCents <= 0) {
@@ -83,12 +90,14 @@ export class PaymentsService {
     }
 
     const localPaymentId = randomUUID();
+    const splits = await this.buildStripeConnectSplits(orderGroup.businessOrders);
     const providerPayment = await this.providerService.createPayment({
       localPaymentId,
       idempotencyKey: normalizedIdempotencyKey,
       orderGroupId: dto.orderGroupId,
       amountCents,
-      currency: "MXN"
+      currency: "MXN",
+      splits
     });
 
     try {
@@ -264,6 +273,7 @@ export class PaymentsService {
       status: string;
       amountCents?: number;
       currency?: string;
+      latestChargeId?: string;
     }
   ): Promise<void> {
     let paidOrderGroupId: string | null = null;
@@ -279,14 +289,34 @@ export class PaymentsService {
       }
 
       const nextStatus = this.statusFromProviderStatus(providerDetails.status);
+
+      if (nextStatus === "SUCCEEDED" && !payment.providerMetadata?.stripeTransfersCreatedAt) {
+        const splits = this.paymentSplitsFromMetadata(payment.providerMetadata);
+        const transfers = await this.providerService.createTransfersForPayment({
+          localPaymentId: payment.id,
+          orderGroupId: payment.orderGroupId,
+          providerPaymentId: providerDetails.providerPaymentId,
+          latestChargeId: providerDetails.latestChargeId,
+          currency: providerDetails.currency ?? payment.currency,
+          splits
+        });
+
+        payment.providerMetadata = {
+          ...(payment.providerMetadata ?? {}),
+          stripeTransfers: transfers,
+          stripeTransfersCreatedAt: new Date().toISOString()
+        };
+      }
+
       payment.status = nextStatus;
       payment.providerPaymentId = providerDetails.providerPaymentId;
       payment.providerMetadata = {
         ...(payment.providerMetadata ?? {}),
-        mercadoPagoPaymentId: providerDetails.providerPaymentId,
-        mercadoPagoStatus: providerDetails.status,
-        mercadoPagoAmountCents: providerDetails.amountCents,
-        mercadoPagoCurrency: providerDetails.currency
+        stripeCheckoutSessionId: providerDetails.providerPaymentId,
+        stripeStatus: providerDetails.status,
+        stripeAmountCents: providerDetails.amountCents,
+        stripeCurrency: providerDetails.currency,
+        stripeLatestChargeId: providerDetails.latestChargeId
       };
 
       if (nextStatus === "SUCCEEDED" && !payment.paidAt) {
@@ -327,7 +357,10 @@ export class PaymentsService {
     body: PaymentWebhookDto,
     requestId?: string
   ): void {
-    const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET ?? process.env.PAYMENT_WEBHOOK_SECRET;
+    const stripeSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    const fallbackSecret = process.env.PAYMENT_WEBHOOK_SECRET;
+    const mercadoPagoSecret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
+    const secret = stripeSecret ?? fallbackSecret ?? mercadoPagoSecret;
 
     if (!secret) {
       throw new UnauthorizedException("Payment webhook secret is not configured");
@@ -338,8 +371,10 @@ export class PaymentsService {
     }
 
     const received = this.signaturePart(signature, "v1") ?? signature.replace(/^sha256=/, "");
-    const signatureTimestamp = this.signaturePart(signature, "ts");
-    const payload = signatureTimestamp && requestId
+    const signatureTimestamp = this.signaturePart(signature, "t") ?? this.signaturePart(signature, "ts");
+    const payload = stripeSecret && this.signaturePart(signature, "t")
+      ? Buffer.from(`${signatureTimestamp}.${rawBody?.toString("utf8") ?? JSON.stringify(body)}`)
+      : signatureTimestamp && requestId
       ? Buffer.from(
         `id:${this.providerPaymentIdFromWebhook(body)};request-id:${requestId};ts:${signatureTimestamp};`
       )
@@ -359,6 +394,11 @@ export class PaymentsService {
 
   private statusFromProviderStatus(status: string): PaymentStatus {
     const statuses: Record<string, PaymentStatus> = {
+      paid: "SUCCEEDED",
+      complete: "SUCCEEDED",
+      unpaid: "PROCESSING",
+      open: "REQUIRES_ACTION",
+      expired: "CANCELLED",
       approved: "SUCCEEDED",
       pending: "PROCESSING",
       in_process: "PROCESSING",
@@ -389,7 +429,7 @@ export class PaymentsService {
   }
 
   private providerPaymentIdFromWebhook(body: PaymentWebhookDto): string {
-    return body.data?.providerPaymentId ?? body.data?.id ?? "";
+    return body.data?.object?.id ?? body.data?.providerPaymentId ?? body.data?.id ?? "";
   }
 
   private signaturePart(signature: string, key: string): string | undefined {
@@ -402,6 +442,70 @@ export class PaymentsService {
   private stringMetadata(payment: Payment, key: string): string | undefined {
     const value = payment.providerMetadata?.[key];
     return typeof value === "string" ? value : undefined;
+  }
+
+  private async buildStripeConnectSplits(
+    businessOrders: Array<{ businessId: string; subtotalCents: number }>
+  ): Promise<PaymentSplit[]> {
+    const businessIds = businessOrders.map((businessOrder) => businessOrder.businessId);
+    const businesses = await this.businessRepository.find({
+      where: { id: In(businessIds) }
+    });
+    const businessesById = new Map(businesses.map((business) => [business.id, business]));
+    const platformFeeBps = this.platformFeeBasisPoints();
+
+    return businessOrders.map((businessOrder) => {
+      const business = businessesById.get(businessOrder.businessId);
+
+      if (!business?.stripeConnectedAccountId || !business.stripeChargesEnabled) {
+        throw new ConflictException(`Business ${businessOrder.businessId} is not ready for Stripe Connect card payments`);
+      }
+
+      const grossAmountCents = Number(businessOrder.subtotalCents);
+      const platformFeeCents = Math.floor((grossAmountCents * platformFeeBps) / 10_000);
+      const transferAmountCents = grossAmountCents - platformFeeCents;
+
+      if (!Number.isInteger(grossAmountCents) || grossAmountCents <= 0 || transferAmountCents <= 0) {
+        throw new ConflictException(`Business ${businessOrder.businessId} has no transferable amount`);
+      }
+
+      return {
+        businessId: businessOrder.businessId,
+        connectedAccountId: business.stripeConnectedAccountId,
+        grossAmountCents,
+        platformFeeCents,
+        transferAmountCents
+      };
+    });
+  }
+
+  private paymentSplitsFromMetadata(metadata: Record<string, unknown> | null | undefined): PaymentSplit[] {
+    const splits = metadata?.transferSplits;
+
+    if (!Array.isArray(splits)) {
+      throw new ConflictException("Payment is missing Stripe transfer splits");
+    }
+
+    return splits.map((split) => {
+      const value = split as Record<string, unknown>;
+      return {
+        businessId: String(value.businessId),
+        connectedAccountId: String(value.connectedAccountId),
+        grossAmountCents: Number(value.grossAmountCents),
+        platformFeeCents: Number(value.platformFeeCents),
+        transferAmountCents: Number(value.transferAmountCents)
+      };
+    });
+  }
+
+  private platformFeeBasisPoints(): number {
+    const configured = Number(process.env.RAPIV_PLATFORM_FEE_BPS ?? 0);
+
+    if (!Number.isInteger(configured) || configured < 0 || configured >= 10_000) {
+      throw new Error("RAPIV_PLATFORM_FEE_BPS must be an integer between 0 and 9999");
+    }
+
+    return configured;
   }
 
   private isUniqueViolation(error: unknown): boolean {
