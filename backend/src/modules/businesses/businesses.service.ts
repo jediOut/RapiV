@@ -173,7 +173,7 @@ export class BusinessesService {
       business = await this.createStripeConnectAccount(ownerUserId, businessId);
     }
 
-    const appBaseUrl = process.env.BUSINESS_APP_URL ?? process.env.PUBLIC_APP_URL ?? "rapiv-negocio://stripe";
+    const appBaseUrl = this.requireStripeReturnBaseUrl();
     const normalizedAppBaseUrl = appBaseUrl.replace(/\/$/, "");
     const link = await this.stripeRequest<Record<string, unknown>>("/v1/account_links", {
       account: business.stripeConnectedAccountId ?? "",
@@ -256,6 +256,20 @@ export class BusinessesService {
     }
 
     return response.json() as Promise<T>;
+  }
+
+  private requireStripeReturnBaseUrl(): string {
+    const appBaseUrl = process.env.BUSINESS_APP_URL ?? process.env.PUBLIC_API_URL;
+
+    if (!appBaseUrl) {
+      throw new Error("Missing BUSINESS_APP_URL or PUBLIC_API_URL for Stripe Connect return URLs");
+    }
+
+    if (!/^https:\/\//.test(appBaseUrl)) {
+      throw new Error("BUSINESS_APP_URL must be an HTTPS URL for Stripe Connect onboarding");
+    }
+
+    return appBaseUrl;
   }
 
   private async stripeGet<T>(path: string): Promise<T> {

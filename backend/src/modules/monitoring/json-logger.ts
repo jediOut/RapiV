@@ -26,12 +26,17 @@ export class JsonLogger implements LoggerService {
   }
 
   private write(level: string, message: unknown, context?: string, trace?: string): void {
+    const error = message instanceof Error ? message : undefined;
     const payload = {
       timestamp: new Date().toISOString(),
       level,
       context,
-      message: typeof message === "string" ? message : JSON.stringify(message),
-      trace
+      message: error
+        ? error.message
+        : typeof message === "string"
+          ? message
+          : JSON.stringify(message),
+      trace: trace ?? error?.stack
     };
 
     const line = JSON.stringify(payload);
