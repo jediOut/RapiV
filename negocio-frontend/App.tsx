@@ -1,6 +1,7 @@
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
 import { SafeAreaView, StyleSheet } from "react-native";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { loginBusinessUser, registerBusinessUser, validateSession } from "./src/services/authApi";
 import { isApiError } from "./src/services/apiError";
@@ -95,36 +96,40 @@ export default function App() {
 
   if (isRestoringSession) {
     return (
-      <SafeAreaView style={styles.safeArea}>
-        <StateView title="Cargando RapiV" message="Estamos restaurando tu sesion." type="loading" />
-      </SafeAreaView>
+      <SafeAreaProvider>
+        <SafeAreaView style={styles.safeArea}>
+          <StateView title="Cargando RapiV" message="Estamos restaurando tu sesion." type="loading" />
+        </SafeAreaView>
+      </SafeAreaProvider>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="dark" />
-      {session ? (
-        <BusinessApp session={session} onLogout={handleLogout} />
-      ) : authScreen === "login" ? (
-        <LoginScreen
-          error={authError}
-          isLoading={isAuthenticating}
-          onLogin={handleLogin}
-          onCreateAccount={() => setAuthScreen("register")}
-        />
-      ) : (
-        <RegisterScreen
-          error={authError}
-          isLoading={isAuthenticating}
-          onRegister={handleRegister}
-          onBackToLogin={() => {
-            setAuthError(null);
-            setAuthScreen("login");
-          }}
-        />
-      )}
-    </SafeAreaView>
+    <SafeAreaProvider>
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar style="dark" />
+        {session ? (
+          <BusinessApp session={session} onLogout={handleLogout} />
+        ) : authScreen === "login" ? (
+          <LoginScreen
+            error={authError}
+            isLoading={isAuthenticating}
+            onLogin={handleLogin}
+            onCreateAccount={() => setAuthScreen("register")}
+          />
+        ) : (
+          <RegisterScreen
+            error={authError}
+            isLoading={isAuthenticating}
+            onRegister={handleRegister}
+            onBackToLogin={() => {
+              setAuthError(null);
+              setAuthScreen("login");
+            }}
+          />
+        )}
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 
