@@ -173,8 +173,7 @@ export class BusinessesService {
       business = await this.createStripeConnectAccount(ownerUserId, businessId);
     }
 
-    const appBaseUrl = this.requireStripeReturnBaseUrl();
-    const normalizedAppBaseUrl = appBaseUrl.replace(/\/$/, "");
+    const normalizedAppBaseUrl = this.requireStripeReturnBaseUrl();
     const link = await this.stripeRequest<Record<string, unknown>>("/v1/account_links", {
       account: business.stripeConnectedAccountId ?? "",
       type: "account_onboarding",
@@ -278,7 +277,8 @@ export class BusinessesService {
       throw new Error("BUSINESS_APP_URL must be an HTTPS URL for Stripe Connect onboarding");
     }
 
-    return appBaseUrl;
+    const normalized = appBaseUrl.replace(/\/$/, "");
+    return normalized.endsWith("/api") ? normalized : `${normalized}/api`;
   }
 
   private async stripeGet<T>(path: string): Promise<T> {
