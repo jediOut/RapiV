@@ -474,30 +474,32 @@ export function SettingsScreen({
           <Text style={styles.stripeDescription}>
             {stripeStatusDescription}
           </Text>
-          <View style={styles.stripeActions}>
-            <Pressable
-              disabled={isLoading}
-              onPress={onConnectStripe}
-              style={styles.stripeButton}
-            >
-              <Text style={styles.stripeButtonText}>
-                {businessProfile.stripeConnectedAccountId ? "Continuar Stripe" : "Configurar Stripe"}
-              </Text>
-            </Pressable>
-            <Pressable
-              disabled={isLoading || !businessProfile.stripeConnectedAccountId}
-              onPress={onRefreshStripeStatus}
-              style={[
-                styles.stripeButtonSecondary,
-                (!businessProfile.stripeConnectedAccountId || isLoading) &&
-                  styles.stripeButtonDisabled
-              ]}
-            >
-              <Text style={styles.stripeButtonSecondaryText}>
-                Actualizar estado
-              </Text>
-            </Pressable>
-          </View>
+          {stripeReady ? null : (
+            <View style={styles.stripeActions}>
+              <Pressable
+                disabled={isLoading}
+                onPress={onConnectStripe}
+                style={styles.stripeButton}
+              >
+                <Text style={styles.stripeButtonText}>
+                  {businessProfile.stripeConnectedAccountId ? "Continuar Stripe" : "Configurar Stripe"}
+                </Text>
+              </Pressable>
+              <Pressable
+                disabled={isLoading || !businessProfile.stripeConnectedAccountId}
+                onPress={onRefreshStripeStatus}
+                style={[
+                  styles.stripeButtonSecondary,
+                  (!businessProfile.stripeConnectedAccountId || isLoading) &&
+                    styles.stripeButtonDisabled
+                ]}
+              >
+                <Text style={styles.stripeButtonSecondaryText}>
+                  Actualizar estado
+                </Text>
+              </Pressable>
+            </View>
+          )}
         </View>
         <View style={styles.paymentOptions}>
           <Pressable
