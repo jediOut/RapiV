@@ -192,6 +192,15 @@ export class BusinessesService {
 
   async refreshStripeConnectStatus(ownerUserId: string, businessId: string): Promise<Business> {
     const business = await this.findOwnedBusiness(ownerUserId, businessId);
+    return this.refreshStripeConnectStatusForBusiness(business);
+  }
+
+  async refreshStripeConnectStatusFromReturn(businessId: string): Promise<Business> {
+    const business = await this.findById(businessId);
+    return this.refreshStripeConnectStatusForBusiness(business);
+  }
+
+  private async refreshStripeConnectStatusForBusiness(business: Business): Promise<Business> {
 
     if (!business.stripeConnectedAccountId) {
       business.stripeChargesEnabled = false;

@@ -5,10 +5,11 @@ import { Business } from "./business.entity";
 import { UsersModule } from "../users/users.module";
 import { BusinessesController } from "./businesses.controller";
 import { BusinessesService } from "./businesses.service";
+import { StripeConnectReturnController } from "./stripe-connect-return.controller";
 
 @Module({
   imports: [TypeOrmModule.forFeature([Business]), UsersModule],
-  controllers: [BusinessesController],
+  controllers: [BusinessesController, StripeConnectReturnController],
   providers: [BusinessesService],
   exports: [BusinessesService]
 })
