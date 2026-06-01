@@ -1,0 +1,69 @@
+name: Deploy staging-lite
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Package repository
+        run: |
+          tar \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='*/node_modules' \
+            --exclude='.expo' \
+            --exclude='*/.expo' \
+            --exclude='deploy/staging.env' \
+            -czf /tmp/rapiv-staging.tar.gz .
+
+      - name: Configure SSH
+        env:
+          STAGING_SSH_PRIVATE_KEY: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$STAGING_SSH_PRIVATE_KEY" > ~/.ssh/rapiv_staging
+          chmod 600 ~/.ssh/rapiv_staging
+          ssh-keyscan -H "$STAGING_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload release bundle
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          STAGING_SSH_USER: ${{ secrets.STAGING_SSH_USER }}
+        run: |
+          scp -i ~/.ssh/rapiv_staging /tmp/rapiv-staging.tar.gz "$STAGING_SSH_USER@$STAGING_HOST:/tmp/rapiv-staging.tar.gz"
+
+      - name: Upload staging env
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          STAGING_SSH_USER: ${{ secrets.STAGING_SSH_USER }}
+          STAGING_ENV_FILE: ${{ secrets.STAGING_ENV_FILE }}
+        run: |
+          printf '%s\n' "$STAGING_ENV_FILE" > /tmp/staging.env
+          scp -i ~/.ssh/rapiv_staging /tmp/staging.env "$STAGING_SSH_USER@$STAGING_HOST:/tmp/staging.env"
+
+      - name: Deploy on EC2
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          STAGING_SSH_USER: ${{ secrets.STAGING_SSH_USER }}
+        run: |
+          ssh -i ~/.ssh/rapiv_staging "$STAGING_SSH_USER@$STAGING_HOST" <<'REMOTE'
+            set -euo pipefail
+            sudo mkdir -p /opt/rapiv/deploy
+            sudo chown -R "$USER:$USER" /opt/rapiv
+            tar -xzf /tmp/rapiv-staging.tar.gz -C /opt/rapiv
+            mv /tmp/staging.env /opt/rapiv/deploy/staging.env
+            chmod 600 /opt/rapiv/deploy/staging.env
+            cd /opt/rapiv
+            docker compose -f docker-compose.staging.yml build backend migrate
+            docker compose -f docker-compose.staging.yml --profile tools run --rm migrate
+            docker compose -f docker-compose.staging.yml up -d backend caddy
+            docker image prune -f
+          REMOTE
