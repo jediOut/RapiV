@@ -33,7 +33,7 @@ resource "aws_security_group" "staging" {
   description = "RapiV staging-lite EC2 access"
 
   ingress {
-    description = "HTTP for Let's Encrypt"
+    description = "HTTP for ACME challenge and staging API"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"

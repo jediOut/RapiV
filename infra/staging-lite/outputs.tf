@@ -4,6 +4,6 @@ output "staging_public_ip" {
 }
 
 output "staging_api_url" {
-  description = "HTTPS API base URL for Expo."
-  value       = "https://${var.staging_domain}/api"
+  description = "API base URL for Expo."
+  value       = var.hosted_zone_id == "" ? "http://${aws_instance.staging.public_ip}/api" : "https://${var.staging_domain}/api"
 }
