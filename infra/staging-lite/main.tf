@@ -67,9 +67,41 @@ resource "aws_security_group" "staging" {
   tags = local.tags
 }
 
+resource "aws_iam_role" "ssm" {
+  name = "${var.project_name}-staging-lite-ssm"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = local.tags
+}
+
+resource "aws_iam_role_policy_attachment" "ssm_managed_instance_core" {
+  role       = aws_iam_role.ssm.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_instance_profile" "ssm" {
+  name = "${var.project_name}-staging-lite-ssm"
+  role = aws_iam_role.ssm.name
+
+  tags = local.tags
+}
+
 resource "aws_instance" "staging" {
   ami                         = data.aws_ami.ubuntu.id
   instance_type               = var.instance_type
+  iam_instance_profile        = aws_iam_instance_profile.ssm.name
   key_name                    = var.key_name
   vpc_security_group_ids      = [aws_security_group.staging.id]
   associate_public_ip_address = true
