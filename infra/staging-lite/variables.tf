@@ -42,3 +42,9 @@ variable "staging_domain" {
   description = "API staging domain, for example staging-api.rapiv.com."
   type        = string
 }
+
+variable "media_bucket_name" {
+  description = "S3 bucket for staging media uploads. Leave empty to generate a unique account-scoped name."
+  type        = string
+  default     = ""
+}

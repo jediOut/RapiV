@@ -12,3 +12,13 @@ output "staging_api_url" {
   description = "API base URL for Expo."
   value       = var.hosted_zone_id == "" ? "http://${aws_instance.staging.public_ip}/api" : "https://${var.staging_domain}/api"
 }
+
+output "media_bucket_name" {
+  description = "S3 bucket name for staging media uploads."
+  value       = aws_s3_bucket.media.bucket
+}
+
+output "media_public_base_url" {
+  description = "Public base URL for staging media files."
+  value       = "https://${aws_s3_bucket.media.bucket}.s3.${var.aws_region}.amazonaws.com"
+}

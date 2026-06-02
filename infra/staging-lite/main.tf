@@ -13,6 +13,8 @@ provider "aws" {
   region = var.aws_region
 }
 
+data "aws_caller_identity" "current" {}
+
 data "aws_ami" "ubuntu" {
   most_recent = true
   owners      = ["099720109477"]
@@ -91,11 +93,79 @@ resource "aws_iam_role_policy_attachment" "ssm_managed_instance_core" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+resource "aws_iam_role_policy" "media_bucket_access" {
+  name = "${var.project_name}-staging-lite-media"
+  role = aws_iam_role.ssm.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject"
+        ]
+        Resource = "${aws_s3_bucket.media.arn}/*"
+      }
+    ]
+  })
+}
+
 resource "aws_iam_instance_profile" "ssm" {
   name = "${var.project_name}-staging-lite-ssm"
   role = aws_iam_role.ssm.name
 
   tags = local.tags
+}
+
+resource "aws_s3_bucket" "media" {
+  bucket = local.media_bucket_name
+
+  tags = merge(local.tags, {
+    Name = local.media_bucket_name
+  })
+}
+
+resource "aws_s3_bucket_public_access_block" "media" {
+  bucket = aws_s3_bucket.media.id
+
+  block_public_acls       = true
+  block_public_policy     = false
+  ignore_public_acls      = true
+  restrict_public_buckets = false
+}
+
+resource "aws_s3_bucket_policy" "media_public_read" {
+  bucket = aws_s3_bucket.media.id
+
+  depends_on = [
+    aws_s3_bucket_public_access_block.media
+  ]
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "PublicReadMedia"
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = "s3:GetObject"
+        Resource  = "${aws_s3_bucket.media.arn}/*"
+      }
+    ]
+  })
+}
+
+resource "aws_s3_bucket_cors_configuration" "media" {
+  bucket = aws_s3_bucket.media.id
+
+  cors_rule {
+    allowed_headers = ["*"]
+    allowed_methods = ["GET", "PUT", "HEAD"]
+    allowed_origins = ["*"]
+    max_age_seconds = 3000
+  }
 }
 
 resource "aws_instance" "staging" {
@@ -144,6 +214,8 @@ resource "aws_route53_record" "api" {
 }
 
 locals {
+  media_bucket_name = var.media_bucket_name != "" ? var.media_bucket_name : "${var.project_name}-media-staging-${data.aws_caller_identity.current.account_id}"
+
   tags = {
     Project     = var.project_name
     Environment = "staging"
