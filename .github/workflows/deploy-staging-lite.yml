@@ -2,6 +2,12 @@ name: Deploy staging-lite
 
 on:
   workflow_dispatch:
+    inputs:
+      use_domain:
+        description: "Start Caddy/HTTPS for a real staging domain"
+        required: true
+        default: false
+        type: boolean
 
 jobs:
   deploy:
@@ -53,8 +59,9 @@ jobs:
         env:
           STAGING_HOST: ${{ secrets.STAGING_HOST }}
           STAGING_SSH_USER: ${{ secrets.STAGING_SSH_USER }}
+          USE_DOMAIN: ${{ inputs.use_domain }}
         run: |
-          ssh -i ~/.ssh/rapiv_staging "$STAGING_SSH_USER@$STAGING_HOST" <<'REMOTE'
+          ssh -i ~/.ssh/rapiv_staging "$STAGING_SSH_USER@$STAGING_HOST" "USE_DOMAIN='$USE_DOMAIN' bash -s" <<'REMOTE'
             set -euo pipefail
             sudo mkdir -p /opt/rapiv/deploy
             sudo chown -R "$USER:$USER" /opt/rapiv
@@ -62,8 +69,17 @@ jobs:
             mv /tmp/staging.env /opt/rapiv/deploy/staging.env
             chmod 600 /opt/rapiv/deploy/staging.env
             cd /opt/rapiv
-            docker compose -f docker-compose.staging.yml build backend migrate
-            docker compose -f docker-compose.staging.yml --profile tools run --rm migrate
-            docker compose -f docker-compose.staging.yml up -d backend caddy
+
+            if [ "$USE_DOMAIN" = "true" ]; then
+              COMPOSE_FILES="-f docker-compose.staging.yml"
+              SERVICES="backend caddy"
+            else
+              COMPOSE_FILES="-f docker-compose.staging.yml -f docker-compose.staging-ip.yml"
+              SERVICES="backend"
+            fi
+
+            docker compose $COMPOSE_FILES build backend migrate
+            docker compose $COMPOSE_FILES --profile tools run --rm migrate
+            docker compose $COMPOSE_FILES up -d $SERVICES
             docker image prune -f
           REMOTE

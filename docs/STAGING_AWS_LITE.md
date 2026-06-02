@@ -32,6 +32,14 @@ staging_domain   = "staging-api.your-domain.com"
 hosted_zone_id   = "optional-route53-zone-id"
 ```
 
+If you do not have a domain yet, keep DNS disabled and use any placeholder domain:
+
+```hcl
+allowed_ssh_cidr = "your-public-ip/32"
+hosted_zone_id   = ""
+staging_domain   = "staging-api.local"
+```
+
 Apply Terraform:
 
 ```powershell
@@ -73,10 +81,25 @@ docker compose -f docker-compose.staging.yml --profile tools run --rm migrate
 docker compose -f docker-compose.staging.yml up -d backend caddy
 ```
 
+Without a domain, expose the API over plain HTTP on port `80`:
+
+```bash
+cd /opt/rapiv
+docker compose -f docker-compose.staging.yml -f docker-compose.staging-ip.yml build backend migrate
+docker compose -f docker-compose.staging.yml -f docker-compose.staging-ip.yml --profile tools run --rm migrate
+docker compose -f docker-compose.staging.yml -f docker-compose.staging-ip.yml up -d backend
+```
+
 Verify:
 
 ```bash
 curl https://staging-api.your-domain.com/api/health
+```
+
+Or, without a domain:
+
+```bash
+curl http://EC2_PUBLIC_IP/api/health
 ```
 
 Expected response:
@@ -102,7 +125,9 @@ Then run:
 Actions -> Deploy staging-lite -> Run workflow
 ```
 
-The workflow uploads the repository, writes `deploy/staging.env` on the server, builds the backend image, runs TypeORM migrations, starts the API, and starts Caddy.
+The workflow uploads the repository, writes `deploy/staging.env` on the server, builds the backend image, runs TypeORM migrations, and starts the API.
+
+Run it with `use_domain=false` while you do not have a domain. Later, when you add a real domain, run it with `use_domain=true` to start Caddy/HTTPS.
 
 ## 5. Test Expo apps against AWS staging
 
@@ -115,6 +140,14 @@ npx expo start
 ```
 
 Repeat with `negocio-frontend` and `repartidor-frontend`.
+
+Without a domain:
+
+```powershell
+$env:EXPO_PUBLIC_API_URL="http://EC2_PUBLIC_IP/api"
+cd cliente-frontend
+npx expo start
+```
 
 For one-off commands without changing your shell session:
 
