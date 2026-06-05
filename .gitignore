@@ -1,8 +1,12 @@
 # Environment files
 .env
 .env.*
+deploy/staging.env
 !.env.example
 !backend/.env.example
+!cliente-frontend/.env.example
+!negocio-frontend/.env.example
+!repartidor-frontend/.env.example
 
 # Dependencies
 node_modules/
@@ -36,3 +40,12 @@ Thumbs.db
 uploads/
 tmp/
 temp/
+
+# Terraform local state and secrets
+**/.terraform/
+**/.terraform.lock.hcl
+**/terraform.tfstate
+**/terraform.tfstate.*
+**/terraform.tfvars
+**/*.tfplan
+!**/terraform.tfvars.example

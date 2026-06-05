@@ -1,0 +1,118 @@
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    container_name: rapiv_staging_caddy
+    restart: unless-stopped
+    env_file:
+      - ./deploy/staging.env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - rapiv_staging
+
+  backend:
+    image: rapiv-backend:staging
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: rapiv_staging_backend
+    restart: unless-stopped
+    env_file:
+      - ./deploy/staging.env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    expose:
+      - "3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rapiv_staging
+
+  migrate:
+    image: rapiv-backend:staging
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    profiles:
+      - tools
+    env_file:
+      - ./deploy/staging.env
+    environment:
+      NODE_ENV: production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    command: ["./node_modules/.bin/typeorm", "-d", "dist/data-source.js", "migration:run"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - rapiv_staging
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: rapiv_staging_postgres
+    restart: unless-stopped
+    env_file:
+      - ./deploy/staging.env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rapiv_staging
+
+  redis:
+    image: redis:7-alpine
+    container_name: rapiv_staging_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rapiv_staging
+
+volumes:
+  caddy_data:
+  caddy_config:
+  postgres_data:
+  redis_data:
+
+networks:
+  rapiv_staging:
