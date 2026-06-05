@@ -22,3 +22,13 @@ output "media_public_base_url" {
   description = "Public base URL for staging media files."
   value       = "https://${aws_s3_bucket.media.bucket}.s3.${var.aws_region}.amazonaws.com"
 }
+
+output "deploy_artifacts_bucket_name" {
+  description = "Private S3 bucket for staging deployment artifacts."
+  value       = aws_s3_bucket.deploy_artifacts.bucket
+}
+
+output "github_actions_deploy_role_arn" {
+  description = "IAM role ARN for GitHub Actions OIDC staging deploys."
+  value       = aws_iam_role.github_actions_deploy.arn
+}
