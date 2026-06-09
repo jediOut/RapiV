@@ -80,25 +80,43 @@ export class NotificationsService {
       title: message.title,
       body: message.body,
       data: message.data ?? {},
-      sound: "default"
+      sound: "default",
+      channelId: "orders",
+      priority: "high"
     }));
 
     try {
-      await fetch("https://exp.host/--/api/v2/push/send", {
+      const response = await fetch("https://exp.host/--/api/v2/push/send", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
         body: JSON.stringify(payload)
       });
+
+      const responseText = await response.text();
+      const responseBody = responseText ? (JSON.parse(responseText) as unknown) : null;
+
+      if (!response.ok) {
+        this.monitoring?.recordNotificationEvent("expo_push_rejected", {
+          tokenCount: expoTokens.length,
+          type: message.data?.type,
+          status: response.status,
+          response: responseBody
+        });
+        return;
+      }
+
       this.monitoring?.recordNotificationEvent("expo_push_sent", {
         tokenCount: expoTokens.length,
-        type: message.data?.type
+        type: message.data?.type,
+        response: responseBody
       });
-    } catch {
+    } catch (error) {
       this.monitoring?.recordNotificationEvent("expo_push_failed", {
         tokenCount: expoTokens.length,
-        type: message.data?.type
+        type: message.data?.type,
+        error: error instanceof Error ? error.message : "unknown"
       });
       // Push delivery is best-effort; order state remains the source of truth.
     }

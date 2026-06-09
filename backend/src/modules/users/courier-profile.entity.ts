@@ -32,6 +32,24 @@ export class CourierProfile {
   @Column({ type: "int", nullable: true })
   maxDeliveryDistanceKm?: number | null;
 
+  @Column({ type: "varchar", nullable: true })
+  stripeConnectedAccountId?: string | null;
+
+  @Column({ type: "varchar", nullable: true })
+  stripePlatformAccountId?: string | null;
+
+  @Column({ type: "boolean", default: false })
+  stripeChargesEnabled!: boolean;
+
+  @Column({ type: "boolean", default: false })
+  stripePayoutsEnabled!: boolean;
+
+  @Column({ type: "boolean", default: false })
+  stripeDetailsSubmitted!: boolean;
+
+  @Column({ type: "jsonb", nullable: true })
+  stripeRequirementsCurrentlyDue?: string[] | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

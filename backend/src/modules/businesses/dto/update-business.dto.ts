@@ -1,5 +1,5 @@
 import { Type } from "class-transformer";
-import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, Min, MinLength } from "class-validator";
+import { IsBoolean, IsNumber, IsOptional, IsString, MinLength } from "class-validator";
 import type { CreateBusinessPayload } from "@rapidin/contracts";
 
 export class UpdateBusinessDto implements Partial<CreateBusinessPayload> {
@@ -39,8 +39,4 @@ export class UpdateBusinessDto implements Partial<CreateBusinessPayload> {
   @IsBoolean()
   acceptsCard?: boolean;
 
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  minimumOrderItems?: number;
 }

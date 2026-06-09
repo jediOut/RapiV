@@ -33,7 +33,7 @@ export class OrdersController {
       throw new ForbiddenException("Only couriers can access ready orders");
     }
 
-    return this.ordersService.findReadyForCourier();
+    return this.ordersService.findReadyForCourier(user.sub);
   }
 
   @Get("courier/mine")
@@ -55,6 +55,42 @@ export class OrdersController {
     }
 
     return this.ordersService.updateCourierAvailability(user.sub, dto);
+  }
+
+  @Get("courier/stripe/profile")
+  getCourierStripeProfile(@CurrentUser() user: AuthenticatedUser) {
+    if (!user.roles.includes("COURIER")) {
+      throw new ForbiddenException("Only couriers can access Stripe Connect profile");
+    }
+
+    return this.ordersService.getCourierStripeConnectProfile(user.sub);
+  }
+
+  @Post("courier/stripe/connect-account")
+  createCourierStripeConnectAccount(@CurrentUser() user: AuthenticatedUser) {
+    if (!user.roles.includes("COURIER")) {
+      throw new ForbiddenException("Only couriers can configure Stripe Connect");
+    }
+
+    return this.ordersService.createCourierStripeConnectAccount(user.sub);
+  }
+
+  @Post("courier/stripe/onboarding-link")
+  createCourierStripeOnboardingLink(@CurrentUser() user: AuthenticatedUser) {
+    if (!user.roles.includes("COURIER")) {
+      throw new ForbiddenException("Only couriers can configure Stripe Connect");
+    }
+
+    return this.ordersService.createCourierStripeOnboardingLink(user.sub);
+  }
+
+  @Post("courier/stripe/refresh-status")
+  refreshCourierStripeConnectStatus(@CurrentUser() user: AuthenticatedUser) {
+    if (!user.roles.includes("COURIER")) {
+      throw new ForbiddenException("Only couriers can refresh Stripe Connect status");
+    }
+
+    return this.ordersService.refreshCourierStripeConnectStatus(user.sub);
   }
 
   @Get("courier/offers")
@@ -101,6 +137,19 @@ export class OrdersController {
     );
   }
 
+  @Patch("businesses/:businessId/suborders/:businessOrderId/cash-payout/confirm")
+  async confirmBusinessCashPayout(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("businessId") businessId: string,
+    @Param("businessOrderId") businessOrderId: string
+  ) {
+    return this.ordersService.confirmBusinessCashPayout(
+      user.sub,
+      businessId,
+      businessOrderId
+    );
+  }
+
   @Patch(":orderGroupId/assign")
   assignToCourier(
     @CurrentUser() user: AuthenticatedUser,
@@ -123,7 +172,25 @@ export class OrdersController {
       throw new ForbiddenException("Only couriers can update delivery status");
     }
 
-    return this.ordersService.updateCourierDeliveryStatus(user.sub, orderGroupId, dto.status);
+    return this.ordersService.updateCourierDeliveryStatus(
+      user.sub,
+      orderGroupId,
+      dto.status,
+      dto.cashReceivedCents
+    );
+  }
+
+  @Patch(":orderGroupId/suborders/:businessOrderId/pickup")
+  markBusinessOrderPickedUp(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("orderGroupId") orderGroupId: string,
+    @Param("businessOrderId") businessOrderId: string
+  ) {
+    if (!user.roles.includes("COURIER")) {
+      throw new ForbiddenException("Only couriers can update delivery status");
+    }
+
+    return this.ordersService.markBusinessOrderPickedUp(user.sub, orderGroupId, businessOrderId);
   }
 
   @Patch(":orderGroupId/customer-location")
@@ -146,6 +213,18 @@ export class OrdersController {
     }
 
     return this.ordersService.updateCourierLocation(user.sub, orderGroupId, dto);
+  }
+
+  @Patch(":orderGroupId/arrival-notification")
+  notifyCustomerCourierArrived(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("orderGroupId") orderGroupId: string
+  ) {
+    if (!user.roles.includes("COURIER")) {
+      throw new ForbiddenException("Only couriers can notify arrival");
+    }
+
+    return this.ordersService.notifyCustomerCourierArrived(user.sub, orderGroupId);
   }
 
   @Get(":orderGroupId/delivery-location")

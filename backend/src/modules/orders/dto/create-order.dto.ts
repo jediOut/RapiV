@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  IsIn,
   Min,
   MinLength,
   ValidateNested
@@ -35,6 +36,14 @@ export class CreateOrderDto implements CreateOrderPayload {
   @ValidateNested({ each: true })
   @Type(() => CreateOrderItemDto)
   items!: CreateOrderItemDto[];
+
+  @IsOptional()
+  @IsIn(["CARD", "CASH"])
+  paymentMethod?: "CARD" | "CASH";
+
+  @IsOptional()
+  @IsIn(["DELIVERY", "PICKUP"])
+  fulfillmentMethod?: "DELIVERY" | "PICKUP";
 
   @IsOptional()
   @IsNumber()

@@ -34,6 +34,9 @@ export class Product {
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   priceCents!: number;
 
+  @Column({ type: 'int', default: 1 })
+  minimumQuantityPerOrder!: number;
+
   @Column({ type: 'boolean', default: true })
   available!: boolean;
 
@@ -61,6 +64,7 @@ export type ProductType = {
   name: string;
   category: string;
   priceCents: number;
+  minimumQuantityPerOrder: number;
   available: boolean;
   createdAt: Date;
 };

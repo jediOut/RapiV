@@ -6,6 +6,7 @@ export const VEGA_DE_ALATORRE_CENTER = {
 };
 
 export const VEGA_DE_ALATORRE_SERVICE_RADIUS_KM = 35;
+export const VEGA_DE_ALATORRE_BUSINESS_RADIUS_KM = 8;
 
 type Coordinates = {
   latitude: number;
@@ -13,14 +14,30 @@ type Coordinates = {
 };
 
 export function assertInsideVegaServiceaddress(location: Coordinates): void {
+  assertInsideRadius(
+    location,
+    VEGA_DE_ALATORRE_SERVICE_RADIUS_KM,
+    "Location is outside Vega de Alatorre service address"
+  );
+}
+
+export function assertInsideVegaBusinessArea(location: Coordinates): void {
+  assertInsideRadius(
+    location,
+    VEGA_DE_ALATORRE_BUSINESS_RADIUS_KM,
+    "Business location must be inside Vega de Alatorre, Veracruz"
+  );
+}
+
+function assertInsideRadius(location: Coordinates, radiusKm: number, errorMessage: string): void {
   if (!Number.isFinite(location.latitude) || !Number.isFinite(location.longitude)) {
     throw new BadRequestException("Invalid coordinates");
   }
 
   const distance = distanceInKm(VEGA_DE_ALATORRE_CENTER, location);
 
-  if (distance > VEGA_DE_ALATORRE_SERVICE_RADIUS_KM) {
-    throw new BadRequestException("Location is outside Vega de Alatorre service address");
+  if (distance > radiusKm) {
+    throw new BadRequestException(errorMessage);
   }
 }
 

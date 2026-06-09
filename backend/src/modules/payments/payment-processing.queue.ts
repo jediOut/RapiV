@@ -4,13 +4,19 @@ import { redisConnection } from "../../common/queue/redis-connection";
 
 export const PAYMENT_WEBHOOK_QUEUE = "payment-webhook-events";
 
-export type PaymentWebhookJob = {
-  eventId: string;
-};
+export type PaymentJob =
+  | {
+      type: "WEBHOOK_EVENT";
+      eventId: string;
+    }
+  | {
+      type: "COURIER_PAYOUT";
+      orderGroupId: string;
+    };
 
 @Injectable()
 export class PaymentProcessingQueue implements OnModuleDestroy {
-  private readonly queue = new Queue<PaymentWebhookJob>(PAYMENT_WEBHOOK_QUEUE, {
+  private readonly queue = new Queue<PaymentJob>(PAYMENT_WEBHOOK_QUEUE, {
     connection: redisConnection()
   });
 
@@ -32,7 +38,38 @@ export class PaymentProcessingQueue implements OnModuleDestroy {
       }
     };
 
-    await this.queue.add("process-payment-webhook", { eventId }, options);
+    await this.queue.add("process-payment-webhook", { type: "WEBHOOK_EVENT", eventId }, options);
+  }
+
+  async addCourierPayout(orderGroupId: string): Promise<void> {
+    const options: JobsOptions = {
+      jobId: `courier-payout:${orderGroupId}`,
+      attempts: 8,
+      backoff: {
+        type: "exponential",
+        delay: 5000
+      },
+      removeOnComplete: {
+        age: 86400,
+        count: 1000
+      },
+      removeOnFail: {
+        age: 604800,
+        count: 5000
+      }
+    };
+
+    await this.queue.add(
+      "process-courier-payout",
+      { type: "COURIER_PAYOUT", orderGroupId },
+      options
+    );
+  }
+
+  async addCourierPayouts(orderGroupIds: string[]): Promise<void> {
+    for (const orderGroupId of orderGroupIds) {
+      await this.addCourierPayout(orderGroupId);
+    }
   }
 
   async addWebhookEvents(eventIds: string[]): Promise<void> {

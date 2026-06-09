@@ -16,6 +16,7 @@ import { PaymentsModule } from "./modules/payments/payments.module";
 import { HealthController } from "./health.controller";
 import { MediaModule } from "./modules/media/media.module";
 import { MonitoringModule } from "./modules/monitoring/monitoring.module";
+import { RatingsModule } from "./modules/ratings/ratings.module";
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { MonitoringModule } from "./modules/monitoring/monitoring.module";
     NotificationsModule,
     MediaModule,
     PaymentsModule,
+    RatingsModule,
     OrdersModule
   ],
   providers: [

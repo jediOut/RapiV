@@ -16,6 +16,16 @@ export type AuthSession = {
   user: AuthUser;
 };
 
+export type CourierStripeConnectProfile = {
+  userId: string;
+  stripeConnectedAccountId?: string | null;
+  stripePlatformAccountId?: string | null;
+  stripeChargesEnabled?: boolean;
+  stripePayoutsEnabled?: boolean;
+  stripeDetailsSubmitted?: boolean;
+  stripeRequirementsCurrentlyDue?: string[] | null;
+};
+
 export type LoginPayload = {
   email: string;
   password: string;

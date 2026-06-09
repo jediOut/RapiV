@@ -69,7 +69,7 @@ export class OrderProcessingQueue implements OnModuleDestroy {
     await this.addLifecycleJob(
       "business-acceptance-timeout",
       { type: "BUSINESS_ACCEPTANCE_TIMEOUT", orderGroupId, businessOrderId },
-      `${orderGroupId}:${businessOrderId}:business-acceptance-timeout`,
+      this.lifecycleJobId(orderGroupId, businessOrderId, "business-acceptance-timeout"),
       delayMs
     );
   }
@@ -82,7 +82,7 @@ export class OrderProcessingQueue implements OnModuleDestroy {
     await this.addLifecycleJob(
       "business-ready-timeout",
       { type: "BUSINESS_READY_TIMEOUT", orderGroupId, businessOrderId },
-      `${orderGroupId}:${businessOrderId}:business-ready-timeout`,
+      this.lifecycleJobId(orderGroupId, businessOrderId, "business-ready-timeout"),
       delayMs
     );
   }
@@ -94,7 +94,7 @@ export class OrderProcessingQueue implements OnModuleDestroy {
     await this.addLifecycleJob(
       "delivery-offer-timeout",
       { type: "DELIVERY_OFFER_TIMEOUT", orderGroupId },
-      `${orderGroupId}:delivery-offer-timeout`,
+      this.lifecycleJobId(orderGroupId, "delivery-offer-timeout"),
       delayMs
     );
   }
@@ -133,6 +133,10 @@ export class OrderProcessingQueue implements OnModuleDestroy {
         count: 5000
       }
     });
+  }
+
+  private lifecycleJobId(...parts: string[]): string {
+    return parts.join("__");
   }
 
   private businessAcceptanceTimeoutMs(): number {

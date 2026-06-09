@@ -49,6 +49,21 @@ export type ProviderTransfer = {
   amountCents: number;
 };
 
+export type ProviderCourierTransfer = {
+  courierId: string;
+  connectedAccountId: string;
+  providerTransferId: string;
+  amountCents: number;
+};
+
+export type ProviderTransferReversal = {
+  businessId: string;
+  providerTransferId: string;
+  providerTransferReversalId: string;
+  amountCents: number;
+  status: string;
+};
+
 @Injectable()
 export class PaymentProviderService {
   readonly providerName = "stripe";
@@ -56,9 +71,9 @@ export class PaymentProviderService {
   async createPayment(input: CreateProviderPaymentInput): Promise<ProviderPayment> {
     const apiKey = this.requireStripeSecretKey();
     const transferGroup = this.transferGroupForOrder(input.orderGroupId);
-    const publicAppUrl = process.env.PUBLIC_APP_URL ?? process.env.CLIENT_APP_URL ?? "rapiv://payments";
-    const successUrl = `${publicAppUrl.replace(/\/$/, "")}/payment-success?session_id={CHECKOUT_SESSION_ID}`;
-    const cancelUrl = `${publicAppUrl.replace(/\/$/, "")}/payment-cancelled?orderGroupId=${input.orderGroupId}`;
+    const returnBaseUrl = this.requirePaymentReturnBaseUrl();
+    const successUrl = `${returnBaseUrl}/payments/stripe-return?session_id={CHECKOUT_SESSION_ID}`;
+    const cancelUrl = `${returnBaseUrl}/payments/stripe-cancelled?orderGroupId=${input.orderGroupId}`;
 
     const session = await this.stripeRequest<Record<string, unknown>>(
       "/v1/checkout/sessions",
@@ -117,6 +132,18 @@ export class PaymentProviderService {
     );
 
     return this.paymentDetailsFromSession(session);
+  }
+
+  async getPlatformAccountId(): Promise<string> {
+    const apiKey = this.requireStripeSecretKey();
+    const account = await this.stripeGet<Record<string, unknown>>("/v1/account", apiKey);
+    const accountId = this.stringField(account, "id");
+
+    if (!accountId) {
+      throw new Error("Stripe did not return a platform account id");
+    }
+
+    return accountId;
   }
 
   async findPaymentForLocalPayment(
@@ -195,9 +222,47 @@ export class PaymentProviderService {
     return transfers;
   }
 
+  async createCourierTransferForPayment(input: {
+    localPaymentId: string;
+    orderGroupId: string;
+    courierId: string;
+    connectedAccountId: string;
+    providerPaymentId: string;
+    latestChargeId?: string;
+    currency: string;
+    amountCents: number;
+  }): Promise<ProviderCourierTransfer> {
+    const apiKey = this.requireStripeSecretKey();
+    const transferGroup = this.transferGroupForOrder(input.orderGroupId);
+    const transfer = await this.stripeRequest<Record<string, unknown>>(
+      "/v1/transfers",
+      {
+        amount: String(input.amountCents),
+        currency: input.currency.toLowerCase(),
+        destination: input.connectedAccountId,
+        transfer_group: transferGroup,
+        ...(input.latestChargeId ? { source_transaction: input.latestChargeId } : {}),
+        "metadata[payment_id]": input.localPaymentId,
+        "metadata[order_group_id]": input.orderGroupId,
+        "metadata[courier_id]": input.courierId,
+        "metadata[payout_type]": "courier_delivery"
+      },
+      apiKey,
+      `courier-transfer-${input.orderGroupId}-${input.courierId}`
+    );
+
+    return {
+      courierId: input.courierId,
+      connectedAccountId: input.connectedAccountId,
+      providerTransferId: this.stringField(transfer, "id") ?? "",
+      amountCents: input.amountCents
+    };
+  }
+
   async refundPayment(
     providerPaymentId: string,
-    idempotencyKey: string
+    idempotencyKey: string,
+    transfers: ProviderTransfer[] = []
   ): Promise<ProviderRefund> {
     const apiKey = this.requireStripeSecretKey();
     const details = await this.getPayment(providerPaymentId);
@@ -223,11 +288,36 @@ export class PaymentProviderService {
       apiKey,
       idempotencyKey
     );
+    const reversals: ProviderTransferReversal[] = [];
+
+    for (const transfer of transfers) {
+      if (!transfer.providerTransferId || transfer.amountCents <= 0) {
+        continue;
+      }
+
+      const reversal = await this.stripeRequest<Record<string, unknown>>(
+        `/v1/transfers/${encodeURIComponent(transfer.providerTransferId)}/reversals`,
+        { amount: String(transfer.amountCents) },
+        apiKey,
+        `${idempotencyKey}:transfer:${transfer.businessId}`
+      );
+
+      reversals.push({
+        businessId: transfer.businessId,
+        providerTransferId: transfer.providerTransferId,
+        providerTransferReversalId: this.stringField(reversal, "id") ?? "",
+        amountCents: transfer.amountCents,
+        status: this.stringField(reversal, "status") ?? "unknown"
+      });
+    }
 
     return {
       providerRefundId: this.stringField(refund, "id") ?? "",
       status: this.stringField(refund, "status") ?? "unknown",
-      raw: refund
+      raw: {
+        refund,
+        transferReversals: reversals
+      }
     };
   }
 
@@ -316,6 +406,22 @@ export class PaymentProviderService {
     }
 
     return apiKey;
+  }
+
+  private requirePaymentReturnBaseUrl(): string {
+    const configured = process.env.PUBLIC_API_URL ?? process.env.PUBLIC_APP_URL ?? process.env.CLIENT_APP_URL;
+
+    if (!configured) {
+      throw new Error("Missing PUBLIC_API_URL for Stripe Checkout return URLs");
+    }
+
+    const normalized = configured.replace(/\/$/, "");
+
+    if (!normalized.startsWith("https://")) {
+      throw new Error("PUBLIC_API_URL must be an HTTPS URL for Stripe Checkout return URLs");
+    }
+
+    return normalized.endsWith("/api") ? normalized : `${normalized}/api`;
   }
 
   private stringField(source: Record<string, unknown> | undefined, key: string): string | undefined {

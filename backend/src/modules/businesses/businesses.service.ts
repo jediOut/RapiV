@@ -1,13 +1,14 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { DataSource, Repository } from "typeorm";
 
+import { StripeConnectService } from "../stripe-connect/stripe-connect.service";
 import { UsersService } from "../users/users.service";
 
 import { Business } from "./business.entity";
 import { CreateBusinessDto } from "./dto/create-business.dto";
 import { UpdateBusinessDto } from "./dto/update-business.dto";
-import { assertInsideVegaServiceaddress } from "src/common/geo/vega-zone";
+import { assertInsideVegaBusinessArea } from "src/common/geo/vega-zone";
 
 @Injectable()
 export class BusinessesService {
@@ -15,20 +16,25 @@ export class BusinessesService {
     @InjectRepository(Business)
     private readonly businessRepository: Repository<Business>,
     private readonly dataSource: DataSource,
-    private readonly usersService: UsersService
+    private readonly usersService: UsersService,
+    private readonly stripeConnectService: StripeConnectService
   ) {}
 
   async create(ownerUserId: string, dto: CreateBusinessDto): Promise<Business> {
-    if (dto.latitude !== undefined && dto.longitude !== undefined) {
-      assertInsideVegaServiceaddress({
-        latitude: dto.latitude,
-        longitude: dto.longitude
-      });
+    this.assertBusinessLocation({
+      latitude: dto.latitude,
+      longitude: dto.longitude
+    });
+
+    const owner = await this.usersService.findById(ownerUserId);
+
+    if (!owner.roles.includes("BUSINESS_OWNER")) {
+      throw new ForbiddenException(
+        "Este correo no esta registrado como cuenta de negocio. Crea una cuenta de negocio con otro correo."
+      );
     }
 
     return this.dataSource.transaction(async (manager) => {
-      await this.usersService.addRole(ownerUserId, "BUSINESS_OWNER", manager);
-
       const business = manager.create(Business, {
         ownerUserId,
         name: dto.name.trim(),
@@ -41,7 +47,6 @@ export class BusinessesService {
         stripeChargesEnabled: false,
         stripePayoutsEnabled: false,
         stripeDetailsSubmitted: false,
-        minimumOrderItems: dto.minimumOrderItems ?? 1,
         isOpen: true
       });
 
@@ -80,10 +85,14 @@ export class BusinessesService {
       throw new ForbiddenException("User does not own this business");
     }
 
-    if (dto.latitude !== undefined && dto.longitude !== undefined) {
-      assertInsideVegaServiceaddress({
-        latitude: dto.latitude,
-        longitude: dto.longitude
+    if (
+      dto.address !== undefined ||
+      dto.latitude !== undefined ||
+      dto.longitude !== undefined
+    ) {
+      this.assertBusinessLocation({
+        latitude: dto.latitude ?? business.latitude,
+        longitude: dto.longitude ?? business.longitude
       });
     }
 
@@ -122,38 +131,33 @@ export class BusinessesService {
       business.acceptsCard = dto.acceptsCard;
     }
 
-    if (dto.minimumOrderItems !== undefined) {
-      business.minimumOrderItems = dto.minimumOrderItems;
-    }
-
     return this.businessRepository.save(business);
   }
 
   async createStripeConnectAccount(ownerUserId: string, businessId: string): Promise<Business> {
-    const business = await this.findOwnedBusiness(ownerUserId, businessId);
+    let business = await this.findOwnedBusiness(ownerUserId, businessId);
 
     if (business.stripeConnectedAccountId) {
-      return this.refreshStripeConnectStatus(ownerUserId, businessId);
+      business = await this.refreshStripeConnectStatusForBusiness(business);
+      if (business.stripeConnectedAccountId) {
+        return business;
+      }
     }
 
-    const account = await this.stripeRequest<Record<string, unknown>>("/v1/accounts", {
-      type: "express",
-      country: "MX",
+    const account = await this.stripeConnectService.createExpressAccount({
       email: business.owner?.email,
-      "capabilities[card_payments][requested]": "true",
-      "capabilities[transfers][requested]": "true",
-      "business_profile[name]": business.name,
-      "metadata[business_id]": business.id,
-      "metadata[owner_user_id]": business.ownerUserId
+      profileName: business.name,
+      requestCardPayments: true,
+      requestTransfers: true,
+      fallbackPlatformAccountId: business.stripePlatformAccountId,
+      metadata: {
+        business_id: business.id,
+        owner_user_id: business.ownerUserId
+      }
     });
 
-    const accountId = this.stringField(account, "id");
-
-    if (!accountId) {
-      throw new Error("Stripe did not return a connected account id");
-    }
-
-    business.stripeConnectedAccountId = accountId;
+    business.stripeConnectedAccountId = account.accountId;
+    business.stripePlatformAccountId = account.platformAccountId;
     business.stripeChargesEnabled = false;
     business.stripePayoutsEnabled = false;
     business.stripeDetailsSubmitted = false;
@@ -169,22 +173,24 @@ export class BusinessesService {
   ): Promise<{ url: string; business: Business }> {
     let business = await this.findOwnedBusiness(ownerUserId, businessId);
 
+    if (business.stripeConnectedAccountId) {
+      business = await this.refreshStripeConnectStatusForBusiness(business);
+    }
+
     if (!business.stripeConnectedAccountId) {
       business = await this.createStripeConnectAccount(ownerUserId, businessId);
     }
 
-    const normalizedAppBaseUrl = this.requireStripeReturnBaseUrl();
-    const link = await this.stripeRequest<Record<string, unknown>>("/v1/account_links", {
-      account: business.stripeConnectedAccountId ?? "",
-      type: "account_onboarding",
-      refresh_url: `${normalizedAppBaseUrl}/stripe-refresh?businessId=${business.id}`,
-      return_url: `${normalizedAppBaseUrl}/stripe-return?businessId=${business.id}`
+    const normalizedAppBaseUrl = this.stripeConnectService.requireReturnBaseUrl({
+      primaryEnvKey: "BUSINESS_APP_URL",
+      fallbackEnvKey: "PUBLIC_API_URL",
+      label: "BUSINESS_APP_URL or PUBLIC_API_URL"
     });
-    const url = this.stringField(link, "url");
-
-    if (!url) {
-      throw new Error("Stripe did not return an onboarding URL");
-    }
+    const url = await this.stripeConnectService.createOnboardingLink({
+      connectedAccountId: business.stripeConnectedAccountId ?? "",
+      refreshUrl: `${normalizedAppBaseUrl}/stripe-refresh?businessId=${business.id}`,
+      returnUrl: `${normalizedAppBaseUrl}/stripe-return?businessId=${business.id}`
+    });
 
     return { url, business };
   }
@@ -202,31 +208,47 @@ export class BusinessesService {
   private async refreshStripeConnectStatusForBusiness(business: Business): Promise<Business> {
 
     if (!business.stripeConnectedAccountId) {
-      business.stripeChargesEnabled = false;
-      business.stripePayoutsEnabled = false;
-      business.stripeDetailsSubmitted = false;
-      business.stripeRequirementsCurrentlyDue = null;
-      business.acceptsCard = false;
-      return this.businessRepository.save(business);
+      return this.resetStripeConnectState(business);
     }
 
-    const account = await this.stripeGet<Record<string, unknown>>(
-      `/v1/accounts/${encodeURIComponent(business.stripeConnectedAccountId)}`
-    );
-    const requirements = this.objectField(account, "requirements");
-    const currentlyDue = requirements?.currently_due;
+    const platformAccountId = await this.stripeConnectService.currentPlatformAccountId();
 
-    business.stripeChargesEnabled = account.charges_enabled === true;
-    business.stripePayoutsEnabled = account.payouts_enabled === true;
-    business.stripeDetailsSubmitted = account.details_submitted === true;
-    business.stripeRequirementsCurrentlyDue = Array.isArray(currentlyDue)
-      ? currentlyDue.filter((item): item is string => typeof item === "string")
-      : null;
+    if (!business.stripePlatformAccountId || business.stripePlatformAccountId !== platformAccountId) {
+      return this.resetStripeConnectState(business);
+    }
+
+    let account;
+
+    try {
+      account = await this.stripeConnectService.retrieveAccountStatus(business.stripeConnectedAccountId);
+    } catch (error) {
+      if (this.stripeConnectService.isMissingResourceError(error)) {
+        return this.resetStripeConnectState(business);
+      }
+      throw error;
+    }
+
+    business.stripePlatformAccountId = platformAccountId;
+    business.stripeChargesEnabled = account.chargesEnabled;
+    business.stripePayoutsEnabled = account.payoutsEnabled;
+    business.stripeDetailsSubmitted = account.detailsSubmitted;
+    business.stripeRequirementsCurrentlyDue = account.requirementsCurrentlyDue;
 
     if (!business.stripeChargesEnabled) {
       business.acceptsCard = false;
     }
 
+    return this.businessRepository.save(business);
+  }
+
+  private resetStripeConnectState(business: Business): Promise<Business> {
+    business.stripeConnectedAccountId = null;
+    business.stripePlatformAccountId = null;
+    business.stripeChargesEnabled = false;
+    business.stripePayoutsEnabled = false;
+    business.stripeDetailsSubmitted = false;
+    business.stripeRequirementsCurrentlyDue = null;
+    business.acceptsCard = false;
     return this.businessRepository.save(business);
   }
 
@@ -246,73 +268,18 @@ export class BusinessesService {
     }
   }
 
-  private async stripeRequest<T>(path: string, params: Record<string, string | undefined>): Promise<T> {
-    const response = await fetch(`https://api.stripe.com${path}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.requireStripeSecretKey()}`,
-        "Content-Type": "application/x-www-form-urlencoded"
-      },
-      body: new URLSearchParams(
-        Object.entries(params).filter((entry): entry is [string, string] => typeof entry[1] === "string")
-      )
+  private assertBusinessLocation(location: {
+    latitude?: number | null;
+    longitude?: number | null;
+  }): void {
+    if (location.latitude === undefined || location.longitude === undefined) {
+      throw new BadRequestException("Business location coordinates are required");
+    }
+
+    assertInsideVegaBusinessArea({
+      latitude: Number(location.latitude),
+      longitude: Number(location.longitude)
     });
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`Stripe Connect request failed with status ${response.status}: ${errorBody}`);
-    }
-
-    return response.json() as Promise<T>;
   }
 
-  private requireStripeReturnBaseUrl(): string {
-    const appBaseUrl = process.env.BUSINESS_APP_URL ?? process.env.PUBLIC_API_URL;
-
-    if (!appBaseUrl) {
-      throw new Error("Missing BUSINESS_APP_URL or PUBLIC_API_URL for Stripe Connect return URLs");
-    }
-
-    if (!/^https:\/\//.test(appBaseUrl)) {
-      throw new Error("BUSINESS_APP_URL must be an HTTPS URL for Stripe Connect onboarding");
-    }
-
-    const normalized = appBaseUrl.replace(/\/$/, "");
-    return normalized.endsWith("/api") ? normalized : `${normalized}/api`;
-  }
-
-  private async stripeGet<T>(path: string): Promise<T> {
-    const response = await fetch(`https://api.stripe.com${path}`, {
-      headers: {
-        Authorization: `Bearer ${this.requireStripeSecretKey()}`
-      }
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`Stripe Connect lookup failed with status ${response.status}: ${errorBody}`);
-    }
-
-    return response.json() as Promise<T>;
-  }
-
-  private requireStripeSecretKey(): string {
-    const apiKey = process.env.STRIPE_SECRET_KEY;
-
-    if (!apiKey) {
-      throw new Error("Missing STRIPE_SECRET_KEY");
-    }
-
-    return apiKey;
-  }
-
-  private stringField(source: Record<string, unknown>, key: string): string | undefined {
-    const value = source[key];
-    return typeof value === "string" ? value : undefined;
-  }
-
-  private objectField(source: Record<string, unknown>, key: string): Record<string, unknown> | undefined {
-    const value = source[key];
-    return typeof value === "object" && value !== null ? value as Record<string, unknown> : undefined;
-  }
 }

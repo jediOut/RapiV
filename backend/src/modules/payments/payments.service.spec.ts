@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { BadRequestException, UnauthorizedException } from "@nestjs/common";
 
 import { Order } from "../orders/order.entity";
+import { CourierProfile } from "../users/courier-profile.entity";
 import { PaymentEvent } from "./payment-event.entity";
 import { Payment } from "./payment.entity";
 import { PaymentsService } from "./payments.service";
@@ -64,10 +65,28 @@ function createService(options: {
   payments?: Payment[];
   events?: PaymentEvent[];
   orders?: Order[];
-  businesses?: Array<{ id: string; stripeConnectedAccountId?: string; stripeChargesEnabled?: boolean }>;
+  courierProfiles?: CourierProfile[];
+  businesses?: Array<{
+    id: string;
+    stripeConnectedAccountId?: string;
+    stripePlatformAccountId?: string;
+    stripeChargesEnabled?: boolean;
+  }>;
+  orderGroup?: {
+    totalCents: number;
+    businessOrders: Array<{
+      id: string;
+      orderGroupId: string;
+      businessId: string;
+      status: string;
+      items: unknown[];
+      subtotalCents: number;
+    }>;
+  };
 } = {}) {
   const payments = options.payments ?? [];
   const events = options.events ?? [];
+  const courierProfiles = options.courierProfiles ?? [];
   const orders =
     options.orders ??
     ([
@@ -79,10 +98,14 @@ function createService(options: {
       }
     ] as Order[]);
   const queuedEventIds: string[] = [];
+  const queuedCourierPayoutOrderGroupIds: string[] = [];
+  const courierTransferCalls: unknown[] = [];
+  const paymentCreateCalls: unknown[] = [];
   const businesses = options.businesses ?? [
     {
       id: "business-1",
       stripeConnectedAccountId: "acct_123",
+      stripePlatformAccountId: "acct_platform_1",
       stripeChargesEnabled: true
     }
   ];
@@ -173,10 +196,32 @@ function createService(options: {
     }
   };
 
+  const courierProfileRepository = {
+    async findOne(options: { where: Partial<CourierProfile> }) {
+      return courierProfiles.find((profile) => matches(profile, options.where)) ?? null;
+    }
+  };
+
+  const orderRepository = {
+    async find() {
+      return orders.filter((order) =>
+        order.status === "DELIVERED" &&
+        order.paymentMethod === "CARD" &&
+        order.paymentStatus === "PAID" &&
+        ["PENDING", "FAILED"].includes(String(order.courierPayoutStatus)) &&
+        Number(order.courierPayoutCents ?? 0) > 0
+      );
+    }
+  };
+
   const manager = {
     async findOne(entity: unknown, options: { where: Record<string, unknown> }) {
       if (entity === Payment) {
         return payments.find((payment) => matches(payment, options.where as Partial<Payment>)) ?? null;
+      }
+
+      if (entity === CourierProfile) {
+        return courierProfiles.find((profile) => matches(profile, options.where as Partial<CourierProfile>)) ?? null;
       }
 
       return null;
@@ -188,13 +233,24 @@ function createService(options: {
 
       return [];
     },
-    async save(entity: unknown, value: Payment | PaymentEvent | Order[]) {
+    async save(entity: unknown, value: Payment | PaymentEvent | Order | Order[]) {
       if (entity === Payment) {
         return paymentRepository.save(value as Payment);
       }
 
       if (entity === PaymentEvent) {
         return paymentEventRepository.save(value as PaymentEvent);
+      }
+
+      if (entity === Order) {
+        const values = Array.isArray(value) ? value : [value];
+
+        for (const order of values as Order[]) {
+          const index = orders.findIndex((existing) => existing.id === order.id);
+          if (index >= 0) {
+            orders[index] = order;
+          }
+        }
       }
 
       return value;
@@ -212,9 +268,9 @@ function createService(options: {
       return {
         id: orderGroupId,
         customerId,
-        totalCents: 2400,
+        totalCents: options.orderGroup?.totalCents ?? 2400,
         status: "PENDING",
-        businessOrders: [
+        businessOrders: options.orderGroup?.businessOrders ?? [
           {
             id: "order-1",
             orderGroupId,
@@ -235,11 +291,12 @@ function createService(options: {
 
   const providerService = {
     providerName: "sandbox",
-    async createPayment() {
+    async createPayment(input: unknown) {
+      paymentCreateCalls.push(input);
       return {
         provider: "sandbox",
         providerPaymentId: "pay_1",
-        checkoutUrl: "https://mercadopago.test/checkout",
+        checkoutUrl: "https://stripe.test/checkout",
         clientSecret: "secret_1",
         status: "REQUIRES_ACTION",
         metadata: { safe: true }
@@ -256,6 +313,9 @@ function createService(options: {
         raw: { id: providerPaymentId, status: "complete", payment_status: "paid" }
       };
     },
+    async getPlatformAccountId() {
+      return "acct_platform_1";
+    },
     async createTransfersForPayment() {
       return [
         {
@@ -265,12 +325,24 @@ function createService(options: {
           amountCents: 2400
         }
       ];
+    },
+    async createCourierTransferForPayment(input: unknown) {
+      courierTransferCalls.push(input);
+      return {
+        courierId: "courier-1",
+        connectedAccountId: "acct_courier_1",
+        providerTransferId: "tr_courier_1",
+        amountCents: 2000
+      };
     }
   };
 
   const processingQueue = {
     async addWebhookEvent(eventId: string) {
       queuedEventIds.push(eventId);
+    },
+    async addCourierPayout(nextOrderGroupId: string) {
+      queuedCourierPayoutOrderGroupIds.push(nextOrderGroupId);
     }
   };
 
@@ -278,13 +350,24 @@ function createService(options: {
     paymentRepository as never,
     paymentEventRepository as never,
     businessRepository as never,
+    courierProfileRepository as never,
+    orderRepository as never,
     dataSource as never,
     ordersService as never,
     providerService as never,
     processingQueue as never
   );
 
-  return { service, payments, events, orders, queuedEventIds };
+  return {
+    service,
+    payments,
+    events,
+    orders,
+    queuedEventIds,
+    queuedCourierPayoutOrderGroupIds,
+    paymentCreateCalls,
+    courierTransferCalls
+  };
 }
 
 function signedBody(body: object) {
@@ -352,6 +435,52 @@ describe("PaymentsService", () => {
     assert.equal(JSON.stringify(payments[0]).includes("card"), false);
   });
 
+  it("calculates card business transfers from business subtotal and leaves delivery fee on platform", async () => {
+    const originalPlatformFee = process.env.RAPIV_PLATFORM_FEE_BPS;
+    process.env.RAPIV_PLATFORM_FEE_BPS = "1000";
+
+    try {
+      const { service, paymentCreateCalls } = createService({
+        orderGroup: {
+          totalCents: 5400,
+          businessOrders: [
+            {
+              id: "order-1",
+              orderGroupId,
+              businessId: "business-1",
+              status: "PENDING",
+              items: [],
+              subtotalCents: 2400
+            }
+          ]
+        }
+      });
+
+      await service.createPayment(customerId, "payment-key-2", { orderGroupId });
+
+      assert.equal(paymentCreateCalls.length, 1);
+      const call = paymentCreateCalls[0] as {
+        amountCents: number;
+        splits: Array<{
+          grossAmountCents: number;
+          platformFeeCents: number;
+          transferAmountCents: number;
+        }>;
+      };
+
+      assert.equal(call.amountCents, 5400);
+      assert.equal(call.splits[0].grossAmountCents, 2400);
+      assert.equal(call.splits[0].platformFeeCents, 240);
+      assert.equal(call.splits[0].transferAmountCents, 2160);
+    } finally {
+      if (originalPlatformFee === undefined) {
+        delete process.env.RAPIV_PLATFORM_FEE_BPS;
+      } else {
+        process.env.RAPIV_PLATFORM_FEE_BPS = originalPlatformFee;
+      }
+    }
+  });
+
   it("rejects webhooks with invalid signatures", async () => {
     const { service } = createService();
 
@@ -381,8 +510,8 @@ describe("PaymentsService", () => {
     assert.equal(queuedEventIds.length, 0);
   });
 
-  it("accepts Mercado Pago signed webhook format", async () => {
-    const { service, queuedEventIds } = createService();
+  it("rejects legacy non-Stripe webhook signature manifests", async () => {
+    const { service } = createService();
     const body = {
       id: "evt_1",
       action: "payment.updated",
@@ -394,15 +523,14 @@ describe("PaymentsService", () => {
       .update(Buffer.from(manifest))
       .digest("hex");
 
-    const response = await service.receiveWebhook(
-      `ts=1700000000,v1=${signature}`,
-      Buffer.from(JSON.stringify(body)),
-      body,
-      "req_1"
+    await assert.rejects(
+      service.receiveWebhook(
+        `ts=1700000000,v1=${signature}`,
+        Buffer.from(JSON.stringify(body)),
+        body
+      ),
+      UnauthorizedException
     );
-
-    assert.deepEqual(response, { received: true, duplicate: false });
-    assert.deepEqual(queuedEventIds, ["event-1"]);
   });
 
   it("accepts Stripe signed checkout session webhooks", async () => {
@@ -432,7 +560,7 @@ describe("PaymentsService", () => {
   it("processes succeeded webhooks in the worker and marks orders paid", async () => {
     const payment = createPayment();
     const event = createEvent();
-    const { service, orders, events } = createService({
+    const { service, orders, events, queuedCourierPayoutOrderGroupIds } = createService({
       payments: [payment],
       events: [event]
     });
@@ -448,5 +576,46 @@ describe("PaymentsService", () => {
     assert.equal(orders[0].paymentStatus, "PAID");
     assert.equal(orders[0].paidAt, payment.paidAt);
     assert.equal(events[0].status, "PROCESSED");
+    assert.deepEqual(queuedCourierPayoutOrderGroupIds, [orderGroupId]);
+  });
+
+  it("creates an idempotent courier payout transfer for delivered paid card orders", async () => {
+    const payment = createPayment({
+      status: "SUCCEEDED",
+      providerMetadata: {
+        stripeLatestChargeId: "ch_1"
+      }
+    });
+    const deliveredOrder = {
+      id: "order-1",
+      orderGroupId,
+      courierId: "courier-1",
+      status: "DELIVERED",
+      paymentMethod: "CARD",
+      paymentStatus: "PAID",
+      courierPayoutCents: 2000,
+      courierPayoutStatus: "PENDING"
+    } as Order;
+    const courierProfile = {
+      userId: "courier-1",
+      stripeConnectedAccountId: "acct_courier_1",
+      stripePayoutsEnabled: true
+    } as CourierProfile;
+    const { service, orders, courierTransferCalls } = createService({
+      payments: [payment],
+      orders: [deliveredOrder],
+      courierProfiles: [courierProfile]
+    });
+
+    await service.processCourierPayout(orderGroupId);
+
+    assert.equal(courierTransferCalls.length, 1);
+    assert.equal(
+      (courierTransferCalls[0] as { connectedAccountId: string }).connectedAccountId,
+      "acct_courier_1"
+    );
+    assert.equal(orders[0].courierPayoutStatus, "PAID");
+    assert.equal(orders[0].courierPayoutProviderTransferId, "tr_courier_1");
+    assert.ok(orders[0].courierPayoutPaidAt);
   });
 });
