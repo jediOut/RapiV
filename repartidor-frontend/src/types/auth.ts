@@ -1,5 +1,6 @@
 import type {
   AuthSession as ContractAuthSession,
+  CourierStripeConnectProfile,
   LoginPayload,
   RegisterPayload as ContractRegisterPayload,
   UserRole
@@ -17,6 +18,7 @@ export type AuthResponse = Omit<ContractAuthSession, "user"> & {
 export type AuthSession = AuthResponse;
 
 export type { LoginPayload };
+export type { CourierStripeConnectProfile };
 
 export type RegisterPayload = Omit<ContractRegisterPayload, "name" | "fullName"> & {
   fullName: string;

@@ -26,6 +26,14 @@ export function ProductRow({ product, onEdit, onToggle, disabled = false }: Prod
         <Text style={styles.mutedText}>
           {product.category} - ${(product.priceCents / 100).toFixed(2)}
         </Text>
+        <Text style={styles.mutedText}>
+          Minimo por pedido: {product.minimumQuantityPerOrder ?? 1}
+        </Text>
+        {product.description ? (
+          <Text numberOfLines={2} style={styles.descriptionText}>
+            {product.description}
+          </Text>
+        ) : null}
         <Text style={[styles.availabilityText, product.available ? styles.availableText : styles.pausedText]}>
           {product.available ? "Visible para clientes" : "Pausado"}
         </Text>
@@ -93,6 +101,12 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 13,
     lineHeight: 18
+  },
+  descriptionText: {
+    color: colors.text,
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 2
   },
   availabilityText: {
     fontSize: 12,

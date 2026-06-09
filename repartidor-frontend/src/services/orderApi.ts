@@ -1,5 +1,6 @@
 import { apiRequest } from './apiClient';
 import type { Order } from '../types/business';
+import type { CourierStripeConnectProfile } from '../types/auth';
 
 export type Coordinates = {
   latitude: number;
@@ -28,6 +29,31 @@ export async function updateCourierAvailability(
     method: 'PATCH',
     token,
     body: payload
+  });
+}
+
+export async function fetchCourierStripeProfile(token: string): Promise<CourierStripeConnectProfile> {
+  return apiRequest<CourierStripeConnectProfile>('/orders/courier/stripe/profile', {
+    token
+  });
+}
+
+export async function createCourierStripeOnboardingLink(
+  token: string
+): Promise<{ url: string; profile: CourierStripeConnectProfile }> {
+  return apiRequest<{ url: string; profile: CourierStripeConnectProfile }>(
+    '/orders/courier/stripe/onboarding-link',
+    {
+      method: 'POST',
+      token
+    }
+  );
+}
+
+export async function refreshCourierStripeStatus(token: string): Promise<CourierStripeConnectProfile> {
+  return apiRequest<CourierStripeConnectProfile>('/orders/courier/stripe/refresh-status', {
+    method: 'POST',
+    token
   });
 }
 
@@ -60,12 +86,24 @@ export async function acceptDeliveryOffer(token: string, offerId: string): Promi
 export async function updateDeliveryStatus(
   token: string,
   orderGroupId: string,
-  status: 'PICKED_UP' | 'ON_THE_WAY' | 'DELIVERED'
+  status: 'PICKED_UP' | 'ON_THE_WAY' | 'DELIVERED',
+  cashReceivedCents?: number
 ): Promise<Order> {
   return apiRequest<Order>(`/orders/${orderGroupId}/delivery-status`, {
     method: 'PATCH',
     token,
-    body: { status }
+    body: cashReceivedCents === undefined ? { status } : { status, cashReceivedCents }
+  });
+}
+
+export async function markBusinessOrderPickedUp(
+  token: string,
+  orderGroupId: string,
+  businessOrderId: string
+): Promise<Order> {
+  return apiRequest<Order>(`/orders/${orderGroupId}/suborders/${businessOrderId}/pickup`, {
+    method: 'PATCH',
+    token,
   });
 }
 
@@ -78,6 +116,16 @@ export async function updateCourierLocation(
     method: 'PATCH',
     token,
     body: location
+  });
+}
+
+export async function notifyCustomerArrival(
+  token: string,
+  orderGroupId: string
+): Promise<{ ok: true; alreadyNotified: boolean }> {
+  return apiRequest(`/orders/${orderGroupId}/arrival-notification`, {
+    method: 'PATCH',
+    token
   });
 }
 

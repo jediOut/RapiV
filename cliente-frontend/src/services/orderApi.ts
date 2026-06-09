@@ -1,7 +1,7 @@
 import apiClient from './apiClient';
 import { API_ENDPOINTS } from '../config/api';
 import type { Order } from '../types/business';
-import type { CreateOrderPayload, OrderGroup } from '@rapidin/contracts';
+import type { CreateOrderPayload, OrderGroup, OrderGroupStatus } from '@rapidin/contracts';
 
 export type Coordinates = {
   latitude: number;
@@ -18,14 +18,17 @@ function normalizeOrder(orderGroup: OrderGroup): Order {
     }))
   );
 
-  const statusMap: Record<string, Order['status']> = {
+  const statusMap: Record<OrderGroupStatus, Order['status']> = {
     PENDING_BUSINESS: 'pending',
     ACCEPTED_BY_BUSINESS: 'confirmed',
     PARTIALLY_ACCEPTED: 'confirmed',
     PREPARING: 'preparing',
     READY_FOR_PICKUP: 'ready',
+    PARTIALLY_READY: 'ready',
+    READY: 'ready',
     ASSIGNED: 'assigned',
     PICKED_UP: 'picked_up',
+    PARTIALLY_PICKED_UP: 'picked_up',
     ON_THE_WAY: 'on_the_way',
     DELIVERED: 'delivered',
     REJECTED: 'cancelled',
@@ -34,14 +37,23 @@ function normalizeOrder(orderGroup: OrderGroup): Order {
 
   return {
     id: orderGroup.id,
-    status: statusMap[orderGroup.status] ?? 'pending',
+    status: statusMap[orderGroup.status],
     totalPrice: orderGroup.totalCents / 100,
+    subtotalCents: orderGroup.subtotalCents,
+    deliveryFeeCents: orderGroup.deliveryFeeCents,
     deliveryAddress: orderGroup.deliveryAddress,
     createdAt: String(orderGroup.createdAt),
     updatedAt: String(orderGroup.createdAt),
     items,
     sourceStatus: orderGroup.status,
+    businessOrders: orderGroup.businessOrders,
+    courierId: orderGroup.courierId,
+    paymentMethod: orderGroup.paymentMethod,
+    fulfillmentMethod: orderGroup.fulfillmentMethod,
     paymentStatus: orderGroup.paymentStatus,
+    cashReceivedCents: orderGroup.cashReceivedCents,
+    cashChangeCents: orderGroup.cashChangeCents,
+    cashCollectedAt: orderGroup.cashCollectedAt ? String(orderGroup.cashCollectedAt) : null,
     paidAt: orderGroup.paidAt ? String(orderGroup.paidAt) : null
   };
 }

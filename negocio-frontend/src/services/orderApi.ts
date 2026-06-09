@@ -14,7 +14,7 @@ export async function updateBusinessOrderStatus(
   token: string,
   businessId: string,
   orderId: string,
-  status: 'ACCEPTED' | 'PREPARING' | 'READY' | 'REJECTED'
+  status: 'ACCEPTED' | 'PREPARING' | 'READY' | 'REJECTED' | 'DELIVERED'
 ): Promise<BusinessOrder> {
   return apiRequest<BusinessOrder>(
     `/orders/businesses/${businessId}/suborders/${orderId}/status`,
@@ -22,6 +22,20 @@ export async function updateBusinessOrderStatus(
       method: 'PATCH',
       token,
       body: { status }
+    }
+  );
+}
+
+export async function confirmBusinessCashPayout(
+  token: string,
+  businessId: string,
+  orderId: string
+): Promise<BusinessOrder> {
+  return apiRequest<BusinessOrder>(
+    `/orders/businesses/${businessId}/suborders/${orderId}/cash-payout/confirm`,
+    {
+      method: 'PATCH',
+      token
     }
   );
 }

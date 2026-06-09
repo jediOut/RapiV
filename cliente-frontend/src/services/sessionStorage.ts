@@ -6,6 +6,13 @@ const SESSION_KEYS = {
   LEGACY_SESSION: 'rapidin_auth_session',
   USER: 'user_data',
   AUTH_TOKEN: 'auth_token',
+  LAST_DELIVERY_ADDRESS: 'rapiv_last_delivery_address',
+};
+
+export type LastDeliveryAddress = {
+  address: string;
+  latitude: number;
+  longitude: number;
 };
 
 export const sessionStorage = {
@@ -55,6 +62,7 @@ export const sessionStorage = {
       await SecureStore.deleteItemAsync(SESSION_KEYS.LEGACY_SESSION);
       await SecureStore.deleteItemAsync(SESSION_KEYS.USER);
       await SecureStore.deleteItemAsync(SESSION_KEYS.AUTH_TOKEN);
+      await SecureStore.deleteItemAsync(SESSION_KEYS.LAST_DELIVERY_ADDRESS);
     } catch (error) {
       console.error('Error clearing session:', error);
     }
@@ -83,6 +91,24 @@ export const sessionStorage = {
       return session?.user ?? null;
     } catch (error) {
       console.error('Error retrieving user:', error);
+      return null;
+    }
+  },
+
+  async saveLastDeliveryAddress(address: LastDeliveryAddress): Promise<void> {
+    try {
+      await SecureStore.setItemAsync(SESSION_KEYS.LAST_DELIVERY_ADDRESS, JSON.stringify(address));
+    } catch (error) {
+      console.error('Error saving last delivery address:', error);
+    }
+  },
+
+  async getLastDeliveryAddress(): Promise<LastDeliveryAddress | null> {
+    try {
+      const rawAddress = await SecureStore.getItemAsync(SESSION_KEYS.LAST_DELIVERY_ADDRESS);
+      return rawAddress ? JSON.parse(rawAddress) as LastDeliveryAddress : null;
+    } catch (error) {
+      console.error('Error loading last delivery address:', error);
       return null;
     }
   },

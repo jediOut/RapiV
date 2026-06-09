@@ -12,6 +12,10 @@ export const authApi = {
     return apiClient.post<AuthResponse>(API_ENDPOINTS.REGISTER, payload);
   },
 
+  async googleLogin(payload: { idToken: string; role: 'CUSTOMER' }): Promise<AuthResponse> {
+    return apiClient.post<AuthResponse>('/auth/google', payload);
+  },
+
   async validateSession(): Promise<User> {
     return apiClient.get<User>('/auth/me');
   },

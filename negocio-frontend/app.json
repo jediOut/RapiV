@@ -5,32 +5,47 @@
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "scheme": "rapivbusiness",
+    "scheme": [
+      "rapiv-negocio",
+      "com.rapiv.business"
+    ],
     "assetBundlePatterns": [
       "**/*"
     ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.rapiv.business",
+      "buildNumber": "1",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "RapiV usa tu ubicacion para registrar la ubicacion real de tu negocio."
       }
     },
     "android": {
-      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "POST_NOTIFICATIONS"],
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "POST_NOTIFICATIONS",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#0F766E"
       },
-      "package": "com.rapiv.business"
+      "package": "com.rapiv.business",
+      "versionCode": 1
     },
     "extra": {
-      "apiUrl": "https://api.rapiv.local"
+      "apiUrl": "https://api.rapiv.local",
+      "eas": {
+        "projectId": "38a6a84e-3b0a-4880-828a-1b306b502cee"
+      }
     },
     "plugins": [
       "expo-asset",
       "expo-secure-store",
       "expo-location",
-      "expo-notifications"
+      "expo-notifications",
+      "expo-web-browser"
     ]
   }
 }

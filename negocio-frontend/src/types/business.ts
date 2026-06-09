@@ -18,6 +18,26 @@ export type Business = ContractBusiness & {
   address: string;
 };
 
+export type BusinessCommissionSettlementStatus = "PENDING" | "CONFIRMED" | "CANCELLED";
+
+export type BusinessCommissionSettlement = {
+  id: string;
+  businessId: string;
+  ownerUserId: string;
+  settlementWeek: string;
+  periodStartAt: string;
+  periodEndAt: string;
+  status: BusinessCommissionSettlementStatus;
+  orderCount: number;
+  orderIds?: string[] | null;
+  grossSalesCents: number;
+  businessPayoutCents: number;
+  rapivCommissionCents: number;
+  businessNotifiedAt?: string | null;
+  confirmedAt?: string | null;
+  confirmedByUserId?: string | null;
+};
+
 export type BusinessProfile = {
   id?: string;
   name?: string;
@@ -26,11 +46,11 @@ export type BusinessProfile = {
   acceptsCash?: boolean;
   acceptsCard?: boolean;
   stripeConnectedAccountId?: string | null;
+  stripePlatformAccountId?: string | null;
   stripeChargesEnabled?: boolean;
   stripePayoutsEnabled?: boolean;
   stripeDetailsSubmitted?: boolean;
   stripeRequirementsCurrentlyDue?: string[] | null;
-  minimumOrderItems?: number;
   alertsEnabled?: boolean;
   coordinates?: Coordinates;
 };
@@ -42,7 +62,6 @@ export type UpdateBusinessPayload = {
   address: string;
   acceptsCash: boolean;
   acceptsCard: boolean;
-  minimumOrderItems: number;
   alertsEnabled: boolean;
   coordinates: Coordinates;
 };

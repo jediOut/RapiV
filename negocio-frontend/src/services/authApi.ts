@@ -22,6 +22,13 @@ export async function loginBusinessUser(payload: LoginPayload): Promise<AuthSess
   });
 }
 
+export async function loginBusinessUserWithGoogle(idToken: string): Promise<AuthSession> {
+  return apiRequest<AuthSession>("/auth/google", {
+    method: "POST",
+    body: { idToken, role: "BUSINESS_OWNER" }
+  });
+}
+
 export async function registerBusinessUser(
   payload: RegisterBusinessPayload
 ): Promise<AuthSession> {

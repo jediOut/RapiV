@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { colors } from "../theme/colors";
 import type { BusinessScreen, TabItem } from "../types/navigation";
@@ -11,8 +12,10 @@ type TabBarProps = {
 };
 
 export function TabBar({ activeScreen, tabs, onChange }: TabBarProps) {
+  const insets = useSafeAreaInsets();
+
   return (
-    <View style={styles.tabBar}>
+    <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
       {tabs.map((tab) => {
         const selected = activeScreen === tab.key;
         return (
@@ -41,7 +44,6 @@ const styles = StyleSheet.create({
     gap: 6,
     justifyContent: "space-around",
     left: 0,
-    paddingBottom: 12,
     paddingHorizontal: 10,
     paddingTop: 8,
     position: "absolute",
