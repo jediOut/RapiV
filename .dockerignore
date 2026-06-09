@@ -23,10 +23,3 @@ monitoring/prometheus/data
 *.log
 npm-debug.log*
 Dockerfile*
-
-**/.terraform
-**/.terraform.lock.hcl
-**/terraform.tfstate
-**/terraform.tfstate.*
-**/terraform.tfvars
-**/*.tfplan
