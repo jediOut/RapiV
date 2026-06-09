@@ -193,6 +193,11 @@ export class OrdersService {
         const courierPayoutCents = fulfillmentMethod === "DELIVERY" ? this.courierPayoutCents() : 0;
         const platformDeliveryMarginCents = deliveryFeeCents - courierPayoutCents;
         const businessCommissionBps = this.platformFeeBasisPoints(paymentMethod);
+        const orderSubtotalCents = [...businessOrderItems.values()]
+          .flat()
+          .reduce((sum, item) => sum + item.lineTotalCents, 0);
+
+        this.assertCardPaymentMinimum(paymentMethod, orderSubtotalCents);
 
         for (const [businessId, items] of businessOrderItems.entries()) {
 
@@ -2480,6 +2485,24 @@ export class OrdersService {
     }
 
     return configured;
+  }
+
+  private assertCardPaymentMinimum(paymentMethod: "CARD" | "CASH", subtotalCents: number): void {
+    if (paymentMethod !== "CARD") {
+      return;
+    }
+
+    const minimumCents = this.cardPaymentMinimumCents();
+
+    if (subtotalCents < minimumCents) {
+      throw new ConflictException(
+        `Los pedidos con tarjeta requieren minimo ${this.formatMoney(minimumCents)} en productos. Usa efectivo para pedidos menores.`
+      );
+    }
+  }
+
+  private cardPaymentMinimumCents(): number {
+    return this.nonNegativeIntegerEnv("CARD_PAYMENT_MINIMUM_CENTS", 18_000);
   }
 
   private nonNegativeIntegerEnv(key: string, fallback: number): number {

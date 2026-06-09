@@ -21,6 +21,7 @@ Required environment variables:
 - `COURIER_APP_URL`, used to build courier Stripe Connect onboarding return and refresh URLs
 - `RAPIV_PLATFORM_FEE_BPS`, card platform fee in basis points, for example `1000` for 10%
 - `RAPIV_CASH_PLATFORM_FEE_BPS`, cash platform fee in basis points, for example `500` for 5%; when omitted, cash uses `RAPIV_PLATFORM_FEE_BPS`
+- `CARD_PAYMENT_MINIMUM_CENTS`, minimum product subtotal required for card orders, default `18000` for MXN 180
 - `CASH_SETTLEMENT_CUTOFF_HOUR`, local hour for daily cash settlement cutoffs, default `22`
 - `CASH_SETTLEMENT_CUTOFF_MINUTE`, local minute for daily cash settlement cutoffs, default `0`
 - `CASH_SETTLEMENT_GRACE_MINUTES`, minutes after cutoff before blocking new delivery offers, default `30`
@@ -33,7 +34,7 @@ Required environment variables:
 - `BUSINESS_COMMISSION_SETTLEMENT_TIMEZONE_OFFSET_MINUTES`, local timezone offset from UTC, default `-360` for Mexico City standard time
 - `BUSINESS_COMMISSION_SETTLEMENT_AUTO_RUN`, set to `false` to disable automatic weekly business commission generation
 - `DELIVERY_FEE_CENTS`, fixed customer delivery fee for the order group, for example `3000` for MXN 30
-- `COURIER_PAYOUT_CENTS`, fixed courier payout recorded as pending, for example `2000` for MXN 20
+- `COURIER_PAYOUT_CENTS`, fixed courier payout recorded as pending, for example `2500` for MXN 25
 
 For cash orders, the customer pays the courier at delivery. RapiV commission is discounted from the business payout (`businessPayoutCents = subtotalCents - businessCommissionCents`) so the business receives its net amount without Stripe being involved.
 

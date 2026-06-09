@@ -558,6 +558,7 @@ describe("OrdersService", () => {
 
     const dto = {
       deliveryAddress: " Calle Principal 123 ",
+      paymentMethod: "CASH" as const,
       items: [{ productId: product.id, quantity: 2 }],
       latitude: 20.0289,
       longitude: -96.6472
@@ -579,9 +580,11 @@ describe("OrdersService", () => {
     const originalDeliveryFee = process.env.DELIVERY_FEE_CENTS;
     const originalCourierPayout = process.env.COURIER_PAYOUT_CENTS;
     const originalPlatformFee = process.env.RAPIV_PLATFORM_FEE_BPS;
+    const originalCardPaymentMinimum = process.env.CARD_PAYMENT_MINIMUM_CENTS;
     process.env.DELIVERY_FEE_CENTS = "3000";
     process.env.COURIER_PAYOUT_CENTS = "2000";
     process.env.RAPIV_PLATFORM_FEE_BPS = "1000";
+    process.env.CARD_PAYMENT_MINIMUM_CENTS = "0";
 
     try {
       const { service } = createService({
@@ -622,6 +625,12 @@ describe("OrdersService", () => {
       } else {
         process.env.RAPIV_PLATFORM_FEE_BPS = originalPlatformFee;
       }
+
+      if (originalCardPaymentMinimum === undefined) {
+        delete process.env.CARD_PAYMENT_MINIMUM_CENTS;
+      } else {
+        process.env.CARD_PAYMENT_MINIMUM_CENTS = originalCardPaymentMinimum;
+      }
     }
   });
 
@@ -629,9 +638,11 @@ describe("OrdersService", () => {
     const originalDeliveryFee = process.env.DELIVERY_FEE_CENTS;
     const originalCourierPayout = process.env.COURIER_PAYOUT_CENTS;
     const originalPlatformFee = process.env.RAPIV_PLATFORM_FEE_BPS;
+    const originalCardPaymentMinimum = process.env.CARD_PAYMENT_MINIMUM_CENTS;
     process.env.DELIVERY_FEE_CENTS = "3000";
     process.env.COURIER_PAYOUT_CENTS = "2000";
     process.env.RAPIV_PLATFORM_FEE_BPS = "1000";
+    process.env.CARD_PAYMENT_MINIMUM_CENTS = "0";
 
     try {
       const secondBusiness = {
@@ -696,14 +707,22 @@ describe("OrdersService", () => {
       } else {
         process.env.RAPIV_PLATFORM_FEE_BPS = originalPlatformFee;
       }
+
+      if (originalCardPaymentMinimum === undefined) {
+        delete process.env.CARD_PAYMENT_MINIMUM_CENTS;
+      } else {
+        process.env.CARD_PAYMENT_MINIMUM_CENTS = originalCardPaymentMinimum;
+      }
     }
   });
 
   it("creates pickup orders without delivery financials or courier payout", async () => {
     const originalDeliveryFee = process.env.DELIVERY_FEE_CENTS;
     const originalCourierPayout = process.env.COURIER_PAYOUT_CENTS;
+    const originalCardPaymentMinimum = process.env.CARD_PAYMENT_MINIMUM_CENTS;
     process.env.DELIVERY_FEE_CENTS = "3000";
     process.env.COURIER_PAYOUT_CENTS = "2000";
+    process.env.CARD_PAYMENT_MINIMUM_CENTS = "0";
 
     try {
       const { service } = createService({
@@ -735,6 +754,41 @@ describe("OrdersService", () => {
         delete process.env.COURIER_PAYOUT_CENTS;
       } else {
         process.env.COURIER_PAYOUT_CENTS = originalCourierPayout;
+      }
+
+      if (originalCardPaymentMinimum === undefined) {
+        delete process.env.CARD_PAYMENT_MINIMUM_CENTS;
+      } else {
+        process.env.CARD_PAYMENT_MINIMUM_CENTS = originalCardPaymentMinimum;
+      }
+    }
+  });
+
+  it("requires cash for orders below the card payment minimum", async () => {
+    const originalCardPaymentMinimum = process.env.CARD_PAYMENT_MINIMUM_CENTS;
+    process.env.CARD_PAYMENT_MINIMUM_CENTS = "18000";
+
+    try {
+      const { service } = createService({
+        products: [product],
+        businesses: [openBusiness]
+      });
+
+      await assert.rejects(
+        service.create(customerId, "card-minimum-key-1", {
+          deliveryAddress: "Calle Principal 123",
+          paymentMethod: "CARD",
+          items: [{ productId: product.id, quantity: 2 }],
+          latitude: 20.0289,
+          longitude: -96.6472
+        }),
+        ConflictException
+      );
+    } finally {
+      if (originalCardPaymentMinimum === undefined) {
+        delete process.env.CARD_PAYMENT_MINIMUM_CENTS;
+      } else {
+        process.env.CARD_PAYMENT_MINIMUM_CENTS = originalCardPaymentMinimum;
       }
     }
   });

@@ -31,6 +31,7 @@ type DeliveryLocation = {
 };
 
 const DELIVERY_FEE_CENTS = 3000;
+const CARD_PAYMENT_MINIMUM_CENTS = 18000;
 
 export default function CartScreen({ navigation }: Props) {
   const { cart, subtotalCents, clearCart } = useCart();
@@ -54,6 +55,9 @@ export default function CartScreen({ navigation }: Props) {
   );
   const acceptsCash = uniqueBusinessIds.every((businessId) => businessRules[businessId]?.acceptsCash !== false);
   const acceptsCard = uniqueBusinessIds.every((businessId) => businessRules[businessId]?.acceptsCard !== false);
+  const meetsCardMinimum = subtotalCents >= CARD_PAYMENT_MINIMUM_CENTS;
+  const cardAvailable = acceptsCard && meetsCardMinimum;
+  const cardMinimum = CARD_PAYMENT_MINIMUM_CENTS / 100;
   const minimumIssues = cart
     .map((item) => {
       const minimum = item.product.minimumQuantityPerOrder ?? 1;
@@ -97,14 +101,14 @@ export default function CartScreen({ navigation }: Props) {
   }, [businessRules, uniqueBusinessIds]);
 
   useEffect(() => {
-    if (paymentMethod === 'CASH' && !acceptsCash && acceptsCard) {
+    if (paymentMethod === 'CASH' && !acceptsCash && cardAvailable) {
       setPaymentMethod('CARD');
     }
 
-    if (paymentMethod === 'CARD' && !acceptsCard && acceptsCash) {
+    if (paymentMethod === 'CARD' && !cardAvailable && acceptsCash) {
       setPaymentMethod('CASH');
     }
-  }, [acceptsCard, acceptsCash, paymentMethod]);
+  }, [acceptsCash, cardAvailable, paymentMethod]);
 
   useEffect(() => {
     async function loadLastDeliveryAddress() {
@@ -263,6 +267,14 @@ export default function CartScreen({ navigation }: Props) {
       return;
     }
 
+    if (paymentMethod === 'CARD' && !meetsCardMinimum) {
+      Alert.alert(
+        'Pago en efectivo',
+        `Los pedidos menores a $${cardMinimum.toFixed(2)} se pagan en efectivo.`
+      );
+      return;
+    }
+
     if (fulfillmentMethod === 'DELIVERY') {
       Alert.alert(
         'Confirmar direccion',
@@ -410,12 +422,12 @@ export default function CartScreen({ navigation }: Props) {
             <Text style={styles.inputLabel}>Forma de pago</Text>
             <View style={styles.paymentMethodRow}>
               <Pressable
-                disabled={!acceptsCard}
+                disabled={!cardAvailable}
                 onPress={() => setPaymentMethod('CARD')}
                 style={[
                   styles.paymentMethodOption,
                   paymentMethod === 'CARD' && styles.paymentMethodOptionActive,
-                  !acceptsCard && styles.paymentMethodOptionDisabled,
+                  !cardAvailable && styles.paymentMethodOptionDisabled,
                 ]}
               >
                 <Text style={[styles.paymentMethodText, paymentMethod === 'CARD' && styles.paymentMethodTextActive]}>
@@ -443,6 +455,11 @@ export default function CartScreen({ navigation }: Props) {
                   : 'El repartidor cobrara el total al entregar y registrara el cambio entregado.'}
               </Text>
             ) : null}
+            {!meetsCardMinimum ? (
+              <Text style={styles.locationHint}>
+                Tarjeta disponible desde ${cardMinimum.toFixed(2)} en productos. Pedidos menores se pagan en efectivo.
+              </Text>
+            ) : null}
             {minimumIssues.map((issue) => (
               <Text key={issue} style={styles.minimumIssue}>
                 {issue}
@@ -454,7 +471,7 @@ export default function CartScreen({ navigation }: Props) {
                 isProcessing ||
                 minimumIssues.length > 0 ||
                 (paymentMethod === 'CASH' && !acceptsCash) ||
-                (paymentMethod === 'CARD' && !acceptsCard)
+                (paymentMethod === 'CARD' && !cardAvailable)
               }
               label={isProcessing ? 'Enviando pedido...' : 'Hacer Pedido'}
               onPress={handleCheckout}
