@@ -4,13 +4,14 @@ import { OAuth2Client } from "google-auth-library";
 import { pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
 
 import { UsersService } from "../users/users.service";
-import { CURRENT_TERMS_VERSION } from "@rapidin/contracts";
 
 import type { User, UserRole } from "../users/user.entity";
 import type { GoogleAuthDto } from "./dto/google-auth.dto";
 import type { LoginDto } from "./dto/login.dto";
 import type { RegisterDto } from "./dto/register.dto";
 import type { UpdateProfileDto } from "./dto/update-profile.dto";
+
+const CURRENT_TERMS_VERSION = "2026-06-09";
 
 @Injectable()
 export class AuthService {
