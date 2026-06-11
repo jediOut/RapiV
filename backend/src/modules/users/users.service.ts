@@ -11,6 +11,9 @@ type CreateUserInput = {
   phone?: string;
   passwordHash: string;
   roles: UserRole[];
+  termsAcceptedAt?: Date;
+  termsVersion?: string;
+  termsApp?: string;
 };
 
 type UpdateUserInput = {
@@ -49,6 +52,9 @@ export class UsersService {
       phone: input.phone?.trim() || undefined,
       passwordHash: input.passwordHash,
       roles: input.roles,
+      termsAcceptedAt: input.termsAcceptedAt,
+      termsVersion: input.termsVersion,
+      termsApp: input.termsApp,
     });
 
     try {

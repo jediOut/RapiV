@@ -2,7 +2,8 @@ import "reflect-metadata";
 
 import * as assert from "node:assert/strict";
 import { beforeEach, describe, it } from "node:test";
-import { ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
+import { CURRENT_TERMS_VERSION } from "@rapidin/contracts";
 
 import type { User, UserRole } from "../users/user.entity";
 import { AuthService } from "./auth.service";
@@ -71,6 +72,23 @@ describe("AuthService", () => {
 
     assert.equal(response.accessToken, "access-token");
     assert.deepEqual(response.user.roles, ["CUSTOMER"]);
+    assert.equal(createCalls, 0);
+  });
+
+  it("rejects registration when terms are not accepted", async () => {
+    await assert.rejects(
+      service.register({
+        email: "nuevo@example.com",
+        username: "nuevo",
+        fullName: "Nuevo Usuario",
+        password: "password123",
+        termsAccepted: undefined as never,
+        termsVersion: CURRENT_TERMS_VERSION,
+        termsApp: "cliente"
+      }),
+      BadRequestException
+    );
+
     assert.equal(createCalls, 0);
   });
 });

@@ -39,4 +39,7 @@ export type RegisterPayload = {
   fullName?: string;
   phone?: string;
   role?: UserRole | string;
+  termsAccepted: true;
+  termsVersion: string;
+  termsApp: "cliente" | "negocio" | "repartidor";
 };

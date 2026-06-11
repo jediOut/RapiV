@@ -4,6 +4,8 @@ import { OAuth2Client } from "google-auth-library";
 import { pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
 
 import { UsersService } from "../users/users.service";
+import { CURRENT_TERMS_VERSION } from "@rapidin/contracts";
+
 import type { User, UserRole } from "../users/user.entity";
 import type { GoogleAuthDto } from "./dto/google-auth.dto";
 import type { LoginDto } from "./dto/login.dto";
@@ -22,10 +24,13 @@ export class AuthService {
   async register(dto: RegisterDto) {
     const role = this.normalizeRole(dto.role);
     const name = dto.fullName ?? dto.name;
+    const termsApp = this.resolveTermsApp(role ?? "CUSTOMER");
 
     if (!name) {
       throw new BadRequestException("Name is required");
     }
+
+    this.assertTermsAccepted(dto.termsAccepted, dto.termsVersion, dto.termsApp, termsApp);
 
     const user = await this.usersService.create({
       email: dto.email,
@@ -33,7 +38,10 @@ export class AuthService {
       name,
       phone: dto.phone,
       passwordHash: this.hashPassword(dto.password),
-      roles: role ? [role] : ["CUSTOMER"]
+      roles: role ? [role] : ["CUSTOMER"],
+      termsAcceptedAt: new Date(),
+      termsVersion: dto.termsVersion,
+      termsApp: dto.termsApp
     });
 
     return this.buildAuthResponse(user);
@@ -89,12 +97,17 @@ export class AuthService {
       return this.buildAuthResponse(user);
     }
 
+    this.assertTermsAccepted(dto.termsAccepted, dto.termsVersion, dto.termsApp, this.resolveTermsApp(role));
+
     user = await this.usersService.create({
       email: googleUser.email,
       username: await this.buildAvailableUsername(googleUser.email),
       name: googleUser.name,
       passwordHash: this.hashPassword(randomBytes(32).toString("hex")),
-      roles: [role]
+      roles: [role],
+      termsAcceptedAt: new Date(),
+      termsVersion: dto.termsVersion,
+      termsApp: dto.termsApp
     });
 
     return this.buildAuthResponse(user);
@@ -176,6 +189,37 @@ export class AuthService {
 
       throw new UnauthorizedException("Token de Google invalido");
     }
+  }
+
+  private assertTermsAccepted(
+    termsAccepted: true | undefined,
+    termsVersion: string | undefined,
+    termsApp: string | undefined,
+    expectedApp: "cliente" | "negocio" | "repartidor"
+  ): void {
+    if (termsAccepted !== true) {
+      throw new BadRequestException("Debes aceptar los terminos y condiciones");
+    }
+
+    if (termsVersion !== CURRENT_TERMS_VERSION) {
+      throw new BadRequestException("Debes aceptar la version vigente de los terminos y condiciones");
+    }
+
+    if (termsApp !== expectedApp) {
+      throw new BadRequestException("Los terminos aceptados no corresponden a esta app");
+    }
+  }
+
+  private resolveTermsApp(role: UserRole): "cliente" | "negocio" | "repartidor" {
+    if (role === "BUSINESS_OWNER") {
+      return "negocio";
+    }
+
+    if (role === "COURIER") {
+      return "repartidor";
+    }
+
+    return "cliente";
   }
 
   private getGoogleClientIds(): string[] {
