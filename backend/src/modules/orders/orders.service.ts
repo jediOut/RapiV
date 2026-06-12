@@ -51,6 +51,12 @@ export type DeliveryOfferSummary = {
 @Injectable()
 export class OrdersService {
   private readonly pendingCreations = new Map<string, Promise<OrderGroup>>();
+  private readonly activeCourierDeliveryStatuses = new Set<string>([
+    "ASSIGNED",
+    "PARTIALLY_PICKED_UP",
+    "PICKED_UP",
+    "ON_THE_WAY"
+  ]);
 
   constructor(
     @InjectRepository(Order)
@@ -758,6 +764,8 @@ export class OrdersService {
     for (const orderGroupId of readyOrderGroupIds) {
       await this.orderProcessingQueue.addDeliveryOfferTimeout(orderGroupId);
     }
+
+    await this.scheduleRecoverableCourierDeliveryTimeouts(paidActiveOrders);
   }
 
   async handleLifecycleJob(job: OrderLifecycleJob): Promise<void> {
@@ -768,6 +776,11 @@ export class OrdersService {
 
     if (job.type === "BUSINESS_READY_TIMEOUT") {
       await this.handleBusinessReadyTimeout(job.orderGroupId, job.businessOrderId);
+      return;
+    }
+
+    if (job.type === "COURIER_DELIVERY_TIMEOUT") {
+      await this.handleCourierDeliveryTimeout(job.orderGroupId);
       return;
     }
 
@@ -858,6 +871,7 @@ export class OrdersService {
 
       await manager.save(Order, orders);
       await manager.save(DeliveryOffer, [offer, ...cancelledOffers]);
+      await this.orderProcessingQueue.addCourierDeliveryTimeout(offer.orderGroupId);
       this.monitoring?.recordOrderEvent("offer_accepted", {
         orderGroupId: offer.orderGroupId,
         offerId: offer.id,
@@ -908,6 +922,7 @@ export class OrdersService {
       }
 
       await manager.save(Order, orders);
+      await this.orderProcessingQueue.addCourierDeliveryTimeout(orderGroupId);
 
       return this.attachCustomerDetails(this.mapCourierOrderGroup(orders));
     });
@@ -1300,6 +1315,102 @@ export class OrdersService {
     };
   }
 
+  private async scheduleRecoverableCourierDeliveryTimeouts(orders: Order[]): Promise<void> {
+    const activeOrderGroupIds = [...new Set(
+      orders
+        .filter((order) => order.courierId && this.activeCourierDeliveryStatuses.has(order.status as string))
+        .map((order) => order.orderGroupId)
+        .filter(Boolean)
+    )];
+
+    for (const orderGroupId of activeOrderGroupIds) {
+      const acceptedOffer = await this.deliveryOfferRepository.findOne({
+        where: { orderGroupId, status: "ACCEPTED" },
+        order: { acceptedAt: "DESC" }
+      });
+      const groupOrders = orders.filter((order) => order.orderGroupId === orderGroupId);
+      const assignedAt = acceptedOffer?.acceptedAt ?? groupOrders
+        .map((order) => order.updatedAt)
+        .filter(Boolean)
+        .sort((left, right) => left.getTime() - right.getTime())[0];
+
+      await this.orderProcessingQueue.addCourierDeliveryTimeout(
+        orderGroupId,
+        this.remainingCourierDeliveryTimeoutMs(assignedAt)
+      );
+    }
+  }
+
+  private remainingCourierDeliveryTimeoutMs(startedAt?: Date | null): number {
+    if (!startedAt) {
+      return this.courierDeliveryTimeoutMs();
+    }
+
+    return Math.max(0, startedAt.getTime() + this.courierDeliveryTimeoutMs() - Date.now());
+  }
+
+  private courierDeliveryTimeoutMs(): number {
+    const configuredMinutes = Number(process.env.COURIER_DELIVERY_TIMEOUT_MINUTES ?? 40);
+    const safeMinutes = Number.isFinite(configuredMinutes) && configuredMinutes > 0 ? configuredMinutes : 40;
+    return safeMinutes * 60_000;
+  }
+
+  private async handleCourierDeliveryTimeout(orderGroupId: string): Promise<void> {
+    const orders = await this.orderRepository.find({
+      where: { orderGroupId }
+    });
+
+    if (
+      !orders.length ||
+      !orders.some((order) => order.courierId) ||
+      !orders.some((order) => this.activeCourierDeliveryStatuses.has(order.status as string))
+    ) {
+      return;
+    }
+
+    const courierIds = [...new Set(
+      orders
+        .map((order) => order.courierId)
+        .filter((courierId): courierId is string => Boolean(courierId))
+    )];
+
+    await this.cancelOrderGroupAndRefund(
+      orderGroupId,
+      "COURIER_DELIVERY_TIMEOUT",
+      "El repartidor no completo la entrega a tiempo. Cancelamos el pedido y procesamos el reembolso si el pago ya fue confirmado."
+    );
+
+    for (const courierId of courierIds) {
+      await this.markCourierAvailableIfNoActiveDeliveries(courierId);
+    }
+  }
+
+  private async markCourierAvailableIfNoActiveDeliveries(courierId: string): Promise<void> {
+    const assignedOrders = await this.orderRepository.find({
+      where: { courierId }
+    });
+    const hasActiveDelivery = this.groupOrders(assignedOrders).some((groupOrders) =>
+      this.activeCourierDeliveryStatuses.has(
+        this.deriveOrderGroupStatus(
+          groupOrders.map((order) => order.status as BusinessOrderStatus)
+        )
+      )
+    );
+
+    if (hasActiveDelivery) {
+      return;
+    }
+
+    const profile = await this.courierProfileRepository.findOne({
+      where: { userId: courierId }
+    });
+
+    if (profile) {
+      profile.availabilityStatus = "AVAILABLE";
+      await this.courierProfileRepository.save(profile);
+    }
+  }
+
   private async handleBusinessAcceptanceTimeout(
     orderGroupId: string,
     businessOrderId: string
@@ -1453,6 +1564,7 @@ export class OrdersService {
 
       await manager.save(Order, orders);
       await manager.save(DeliveryOffer, [offer, ...cancelledOffers]);
+      await this.orderProcessingQueue.addCourierDeliveryTimeout(offer.orderGroupId);
 
       this.monitoring?.recordOrderEvent("offer_auto_assigned", {
         orderGroupId: offer.orderGroupId,
@@ -1815,8 +1927,8 @@ export class OrdersService {
       id: order.id,
       orderGroupId: order.orderGroupId,
       businessId: order.businessId,
-      businessLatitude: order.businessLatitude,
-      businessLongitude: order.businessLongitude,
+      businessLatitude: this.nullableNumber(order.businessLatitude),
+      businessLongitude: this.nullableNumber(order.businessLongitude),
       businessAddress: order.businessAddress,
       paymentMethod: order.paymentMethod,
       fulfillmentMethod: order.fulfillmentMethod,
@@ -1835,6 +1947,15 @@ export class OrdersService {
       businessCashPayoutConfirmedAt: order.businessCashPayoutConfirmedAt,
       businessCashPayoutConfirmedByUserId: order.businessCashPayoutConfirmedByUserId
     };
+  }
+
+  private nullableNumber(value: number | string | null | undefined): number | null {
+    if (value === null || value === undefined) {
+      return null;
+    }
+
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
   }
 
   private groupOrders(orders: Order[]): Order[][] {

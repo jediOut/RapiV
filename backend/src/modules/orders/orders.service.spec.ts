@@ -84,6 +84,7 @@ function createService(options: {
   const cashSettlements = options.cashSettlements ?? [];
   const users = options.users ?? [];
   const enqueuedOfferGenerations: string[] = [];
+  const enqueuedCourierDeliveryTimeouts: Array<{ orderGroupId: string; delayMs?: number }> = [];
   let orderSequence = 1;
   let transactionCount = 0;
 
@@ -366,6 +367,12 @@ function createService(options: {
     },
     async addDeliveryOfferTimeout() {
       return undefined;
+    },
+    async addCourierDeliveryTimeout(orderGroupId: string, delayMs?: number) {
+      enqueuedCourierDeliveryTimeouts.push(
+        delayMs === undefined ? { orderGroupId } : { orderGroupId, delayMs }
+      );
+      return undefined;
     }
   };
 
@@ -482,6 +489,7 @@ function createService(options: {
     payments,
     courierProfiles,
     enqueuedOfferGenerations,
+    enqueuedCourierDeliveryTimeouts,
     sentNotifications,
     refundCalls,
     queuedCourierPayoutOrderGroupIds: paymentProcessingQueue.courierPayoutOrderGroupIds,
@@ -1040,7 +1048,7 @@ describe("OrdersService", () => {
       createdAt: new Date(),
       updatedAt: new Date()
     } as CourierProfile;
-    const { service, sentNotifications } = createService({
+    const { service, sentNotifications, enqueuedCourierDeliveryTimeouts } = createService({
       orders: [order],
       offers: [acceptedOffer, competingOffer],
       courierProfiles: [profile]
@@ -1054,9 +1062,58 @@ describe("OrdersService", () => {
     assert.equal(acceptedOffer.status, "ACCEPTED");
     assert.equal(competingOffer.status, "CANCELLED");
     assert.equal(profile.availabilityStatus, "BUSY");
+    assert.deepEqual(enqueuedCourierDeliveryTimeouts, [{ orderGroupId }]);
     assert.deepEqual(sentNotifications[0]?.message.data, {
       type: "ORDER_ASSIGNED",
       orderGroupId
+    });
+  });
+
+  it("cancels an active delivery when the courier delivery timeout expires", async () => {
+    const order = createOrder({
+      status: "ASSIGNED",
+      courierId,
+      courierPayoutStatus: "PENDING"
+    });
+    const payment = {
+      id: "payment-1",
+      orderGroupId,
+      status: "SUCCEEDED",
+      providerPaymentId: "pi_test_1",
+      providerMetadata: {},
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-01T00:00:00.000Z")
+    } as Payment;
+    const profile = {
+      userId: courierId,
+      availabilityStatus: "BUSY",
+      createdAt: new Date(),
+      updatedAt: new Date()
+    } as CourierProfile;
+    const { service, refundCalls, sentNotifications } = createService({
+      orders: [order],
+      payments: [payment],
+      courierProfiles: [profile]
+    });
+
+    await service.handleLifecycleJob({ type: "COURIER_DELIVERY_TIMEOUT", orderGroupId });
+
+    assert.equal(order.status, "CANCELLED");
+    assert.equal(order.paymentStatus, "REFUNDED");
+    assert.equal(order.courierPayoutStatus, "CANCELLED");
+    assert.equal(payment.status, "CANCELLED");
+    assert.equal(profile.availabilityStatus, "AVAILABLE");
+    assert.deepEqual(refundCalls[0], {
+      providerPaymentId: "pi_test_1",
+      idempotencyKey: `refund:${orderGroupId}:COURIER_DELIVERY_TIMEOUT`,
+      transfers: []
+    });
+    assert.deepEqual(sentNotifications[0]?.message.data, {
+      type: "ORDER_REFUNDED",
+      orderGroupId,
+      reason: "COURIER_DELIVERY_TIMEOUT",
+      rejectedBusinessId: undefined,
+      rejectedBusinessName: undefined
     });
   });
 

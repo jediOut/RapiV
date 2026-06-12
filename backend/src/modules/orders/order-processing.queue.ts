@@ -23,6 +23,10 @@ export type OrderLifecycleJob =
   | {
       type: "DELIVERY_OFFER_TIMEOUT";
       orderGroupId: string;
+    }
+  | {
+      type: "COURIER_DELIVERY_TIMEOUT";
+      orderGroupId: string;
     };
 
 @Injectable()
@@ -99,6 +103,18 @@ export class OrderProcessingQueue implements OnModuleDestroy {
     );
   }
 
+  async addCourierDeliveryTimeout(
+    orderGroupId: string,
+    delayMs = this.courierDeliveryTimeoutMs()
+  ): Promise<void> {
+    await this.addLifecycleJob(
+      "courier-delivery-timeout",
+      { type: "COURIER_DELIVERY_TIMEOUT", orderGroupId },
+      this.lifecycleJobId(orderGroupId, "courier-delivery-timeout"),
+      delayMs
+    );
+  }
+
   async addDeliveryOfferGenerations(orderGroupIds: string[]): Promise<void> {
     for (const orderGroupId of orderGroupIds) {
       await this.addDeliveryOfferGeneration(orderGroupId);
@@ -149,6 +165,10 @@ export class OrderProcessingQueue implements OnModuleDestroy {
 
   private deliveryOfferTimeoutMs(): number {
     return this.minutesToMs(process.env.DELIVERY_OFFER_TTL_MINUTES, 15);
+  }
+
+  private courierDeliveryTimeoutMs(): number {
+    return this.minutesToMs(process.env.COURIER_DELIVERY_TIMEOUT_MINUTES, 40);
   }
 
   private minutesToMs(value: string | undefined, fallback: number): number {
