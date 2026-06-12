@@ -1,0 +1,14 @@
+﻿<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" rx="188" fill="#2563EB"/>
+  <circle cx="831" cy="119" r="310" fill="white" fill-opacity=".11"/>
+  <circle cx="52" cy="994" r="250" fill="white" fill-opacity=".10"/>
+  <text x="266" y="528" fill="white" font-family="Segoe UI, Arial, sans-serif" font-size="320" font-weight="800">R</text>
+  <text x="494" y="548" fill="white" font-family="Segoe UI, Arial, sans-serif" font-size="276" font-weight="800">V</text>
+  <path d="M294 724L420 666L522 708L642 650L760 708" stroke="white" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" opacity=".82"/>
+  <circle cx="294" cy="724" r="28" fill="white"/>
+  <circle cx="294" cy="724" r="18" fill="#22C55E"/>
+  <circle cx="642" cy="650" r="28" fill="white"/>
+  <circle cx="642" cy="650" r="18" fill="#22C55E"/>
+  <circle cx="760" cy="708" r="28" fill="white"/>
+  <circle cx="760" cy="708" r="18" fill="#22C55E"/>
+</svg>

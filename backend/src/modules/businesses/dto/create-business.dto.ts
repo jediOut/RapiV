@@ -1,5 +1,5 @@
 import { Type } from "class-transformer";
-import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, Min, MinLength } from "class-validator";
+import { IsBoolean, IsNumber, IsOptional, IsString, MinLength } from "class-validator";
 
 export class CreateBusinessDto {
   @IsString()
@@ -32,8 +32,4 @@ export class CreateBusinessDto {
   @IsBoolean()
   acceptsCard?: boolean;
 
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  minimumOrderItems?: number;
 }

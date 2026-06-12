@@ -12,9 +12,18 @@ export class UpdateProductDto {
   category?: string;
 
   @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
   @IsInt()
   @Min(1)
   priceCents?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  minimumQuantityPerOrder?: number;
 
   @IsOptional()
   @IsString()

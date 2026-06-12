@@ -17,23 +17,42 @@ interface OrderCardProps {
 const getStatusColor = (status: Order['status']) => {
   switch (status) {
     case 'pending':
-      return colors.warning;
     case 'confirmed':
-      return colors.warning;
     case 'preparing':
-      return colors.warning;
+      return '#FFFBEB';
     case 'ready':
-      return colors.secondary;
+      return '#EFF6FF';
     case 'assigned':
     case 'picked_up':
     case 'on_the_way':
-      return colors.primary;
+      return '#E0F2FE';
     case 'delivered':
-      return colors.success;
+      return '#ECFDF5';
     case 'cancelled':
-      return colors.danger;
+      return '#FEF2F2';
     default:
-      return colors.textSecondary;
+      return '#F1F5F9';
+  }
+};
+
+const getStatusTextColor = (status: Order['status']) => {
+  switch (status) {
+    case 'pending':
+    case 'confirmed':
+    case 'preparing':
+      return '#92400E';
+    case 'ready':
+      return '#1D4ED8';
+    case 'assigned':
+    case 'picked_up':
+    case 'on_the_way':
+      return '#0369A1';
+    case 'delivered':
+      return '#047857';
+    case 'cancelled':
+      return '#B91C1C';
+    default:
+      return colors.text;
   }
 };
 
@@ -54,18 +73,21 @@ const getStatusLabel = (status: Order['status']) => {
 
 export default function OrderCard({ order, onPress }: OrderCardProps) {
   const createdDate = new Date(order.createdAt).toLocaleDateString('es-ES');
+  const orderNumber = `RAP-${order.id.slice(0, 8).toUpperCase()}`;
 
   return (
     <TouchableOpacity style={styles.card} onPress={onPress}>
       <View style={styles.header}>
-        <Text style={styles.orderId}>Orden #{order.id.slice(0, 8)}</Text>
+        <Text style={styles.orderId}>Numero de pedido {orderNumber}</Text>
         <View
           style={[
             styles.statusBadge,
             { backgroundColor: getStatusColor(order.status) },
           ]}
         >
-          <Text style={styles.statusText}>{getStatusLabel(order.status)}</Text>
+          <Text style={[styles.statusText, { color: getStatusTextColor(order.status) }]}>
+            {getStatusLabel(order.status)}
+          </Text>
         </View>
       </View>
 
@@ -74,6 +96,9 @@ export default function OrderCard({ order, onPress }: OrderCardProps) {
         <Text style={styles.itemsCount}>
           {order.items.length} artículo{order.items.length > 1 ? 's' : ''}
         </Text>
+        {order.paymentStatus === 'REFUNDED' ? (
+          <Text style={styles.refundText}>Pago reembolsado</Text>
+        ) : null}
       </View>
 
       <View style={styles.footer}>
@@ -105,14 +130,15 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   statusBadge: {
+    borderColor: colors.border,
+    borderWidth: 1,
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 4,
+    borderRadius: 8,
   },
   statusText: {
     fontSize: 12,
-    fontWeight: '600',
-    color: colors.background,
+    fontWeight: '800',
   },
   body: {
     marginBottom: 8,
@@ -125,6 +151,12 @@ const styles = StyleSheet.create({
   itemsCount: {
     fontSize: 13,
     color: colors.text,
+  },
+  refundText: {
+    color: colors.dangerText,
+    fontSize: 12,
+    fontWeight: '800',
+    marginTop: 4,
   },
   footer: {
     flexDirection: 'row',

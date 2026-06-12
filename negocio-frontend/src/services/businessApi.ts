@@ -1,5 +1,11 @@
 import { apiRequest } from "./apiClient";
-import type { Business, CreateProductPayload, Product, UpdateProductPayload } from "../types/business";
+import type {
+  Business,
+  BusinessCommissionSettlement,
+  CreateProductPayload,
+  Product,
+  UpdateProductPayload
+} from "../types/business";
 
 function finiteNumberOrUndefined(value: unknown) {
   const numericValue = Number(value);
@@ -8,6 +14,16 @@ function finiteNumberOrUndefined(value: unknown) {
 
 export async function fetchMyBusinesses(token: string): Promise<Business[]> {
   return apiRequest<Business[]>("/businesses/mine", { token });
+}
+
+export async function fetchBusinessCommissionSettlements(
+  token: string,
+  businessId: string
+): Promise<BusinessCommissionSettlement[]> {
+  return apiRequest<BusinessCommissionSettlement[]>(
+    `/business-commission-settlements/businesses/${businessId}/mine`,
+    { token }
+  );
 }
 
 export async function createBusiness(
@@ -38,7 +54,6 @@ export async function updateBusiness(
     logo?: string;
     acceptsCash?: boolean;
     acceptsCard?: boolean;
-    minimumOrderItems?: number;
   }
 ): Promise<Business> {
   const body: Record<string, unknown> = {};
@@ -76,10 +91,6 @@ export async function updateBusiness(
 
   if (payload.acceptsCard !== undefined) {
     body.acceptsCard = payload.acceptsCard;
-  }
-
-  if (payload.minimumOrderItems !== undefined) {
-    body.minimumOrderItems = payload.minimumOrderItems;
   }
 
   return apiRequest<Business>(`/businesses/${businessId}`, {

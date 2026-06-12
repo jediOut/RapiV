@@ -211,6 +211,51 @@ export const styles = StyleSheet.create({
     fontSize: 13
   },
 
+  commissionPanel: {
+    backgroundColor: colors.background,
+    borderColor: colors.border,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 18,
+    padding: 12
+  },
+
+  commissionHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 8
+  },
+
+  commissionTitle: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "800"
+  },
+
+  commissionStatus: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: "800"
+  },
+
+  commissionStatusPending: {
+    color: colors.primary
+  },
+
+  commissionAmount: {
+    color: colors.text,
+    fontSize: 24,
+    fontWeight: "900",
+    marginBottom: 4
+  },
+
+  commissionDescription: {
+    color: colors.textMuted,
+    fontSize: 13,
+    lineHeight: 18
+  },
+
   mapHeader: {
     alignItems: "center",
     flexDirection: "row",

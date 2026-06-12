@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -19,11 +19,16 @@ export default function ProductCard({
   product,
   onAddToCart,
 }: ProductCardProps) {
-  const [quantity, setQuantity] = useState(1);
+  const minimumQuantity = product.minimumQuantityPerOrder ?? 1;
+  const [quantity, setQuantity] = useState(minimumQuantity);
+
+  useEffect(() => {
+    setQuantity(minimumQuantity);
+  }, [minimumQuantity, product.id]);
 
   const handleAddToCart = () => {
     onAddToCart(product, quantity);
-    setQuantity(1);
+    setQuantity(minimumQuantity);
   };
 
   return (
@@ -46,11 +51,14 @@ export default function ProductCard({
           </Text>
         )}
         <Text style={styles.price}>${(product.priceCents / 100).toFixed(2)}</Text>
+        {minimumQuantity > 1 ? (
+          <Text style={styles.minimumText}>Minimo: {minimumQuantity}</Text>
+        ) : null}
 
         {product.available ? (
           <View style={styles.quantityContainer}>
             <TouchableOpacity
-              onPress={() => quantity > 1 && setQuantity(quantity - 1)}
+              onPress={() => quantity > minimumQuantity && setQuantity(quantity - 1)}
               style={styles.quantityButton}
             >
               <MaterialIcons name="remove" size={18} color={colors.text} />
@@ -120,6 +128,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.primary,
     marginTop: 4,
+  },
+  minimumText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 2,
   },
   quantityContainer: {
     flexDirection: 'row',

@@ -1,15 +1,22 @@
-import { BadRequestException, Injectable, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, UnauthorizedException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
+import { OAuth2Client } from "google-auth-library";
 import { pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
 
 import { UsersService } from "../users/users.service";
+
 import type { User, UserRole } from "../users/user.entity";
+import type { GoogleAuthDto } from "./dto/google-auth.dto";
 import type { LoginDto } from "./dto/login.dto";
 import type { RegisterDto } from "./dto/register.dto";
 import type { UpdateProfileDto } from "./dto/update-profile.dto";
 
+const CURRENT_TERMS_VERSION = "2026-06-09";
+
 @Injectable()
 export class AuthService {
+  private readonly googleClient = new OAuth2Client();
+
   constructor(
     private readonly jwtService: JwtService,
     private readonly usersService: UsersService
@@ -18,10 +25,13 @@ export class AuthService {
   async register(dto: RegisterDto) {
     const role = this.normalizeRole(dto.role);
     const name = dto.fullName ?? dto.name;
+    const termsApp = this.resolveTermsApp(role ?? "CUSTOMER");
 
     if (!name) {
       throw new BadRequestException("Name is required");
     }
+
+    this.assertTermsAccepted(dto.termsAccepted, dto.termsVersion, dto.termsApp, termsApp);
 
     const user = await this.usersService.create({
       email: dto.email,
@@ -29,7 +39,10 @@ export class AuthService {
       name,
       phone: dto.phone,
       passwordHash: this.hashPassword(dto.password),
-      roles: role ? [role] : ["CUSTOMER"]
+      roles: role ? [role] : ["CUSTOMER"],
+      termsAcceptedAt: new Date(),
+      termsVersion: dto.termsVersion,
+      termsApp: dto.termsApp
     });
 
     return this.buildAuthResponse(user);
@@ -66,6 +79,37 @@ export class AuthService {
     if (!user || !this.verifyPassword(dto.password, user.passwordHash)) {
       throw new UnauthorizedException("Invalid credentials");
     }
+
+    return this.buildAuthResponse(user);
+  }
+
+  async loginWithGoogle(dto: GoogleAuthDto) {
+    const role = this.normalizeRole(dto.role) ?? "CUSTOMER";
+    const googleUser = await this.verifyGoogleIdToken(dto.idToken);
+    let user = await this.usersService.findByEmail(googleUser.email);
+
+    if (user) {
+      if (!user.roles.includes(role)) {
+        throw new ConflictException(
+          "Este correo ya esta registrado para otra app. Usa otro correo o inicia sesion en la app correspondiente."
+        );
+      }
+
+      return this.buildAuthResponse(user);
+    }
+
+    this.assertTermsAccepted(dto.termsAccepted, dto.termsVersion, dto.termsApp, this.resolveTermsApp(role));
+
+    user = await this.usersService.create({
+      email: googleUser.email,
+      username: await this.buildAvailableUsername(googleUser.email),
+      name: googleUser.name,
+      passwordHash: this.hashPassword(randomBytes(32).toString("hex")),
+      roles: [role],
+      termsAcceptedAt: new Date(),
+      termsVersion: dto.termsVersion,
+      termsApp: dto.termsApp
+    });
 
     return this.buildAuthResponse(user);
   }
@@ -115,6 +159,100 @@ export class AuthService {
         roles: user.roles
       }
     };
+  }
+
+  private async verifyGoogleIdToken(idToken: string) {
+    const clientIds = this.getGoogleClientIds();
+
+    if (clientIds.length === 0) {
+      throw new BadRequestException("Google Sign-In no esta configurado");
+    }
+
+    try {
+      const ticket = await this.googleClient.verifyIdToken({
+        idToken,
+        audience: clientIds
+      });
+      const payload = ticket.getPayload();
+
+      if (!payload?.email || payload.email_verified !== true) {
+        throw new UnauthorizedException("No se pudo verificar tu cuenta de Google");
+      }
+
+      return {
+        email: payload.email.toLowerCase().trim(),
+        name: payload.name?.trim() || payload.email.split("@")[0]
+      };
+    } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        throw error;
+      }
+
+      throw new UnauthorizedException("Token de Google invalido");
+    }
+  }
+
+  private assertTermsAccepted(
+    termsAccepted: true | undefined,
+    termsVersion: string | undefined,
+    termsApp: string | undefined,
+    expectedApp: "cliente" | "negocio" | "repartidor"
+  ): void {
+    if (termsAccepted !== true) {
+      throw new BadRequestException("Debes aceptar los terminos y condiciones");
+    }
+
+    if (termsVersion !== CURRENT_TERMS_VERSION) {
+      throw new BadRequestException("Debes aceptar la version vigente de los terminos y condiciones");
+    }
+
+    if (termsApp !== expectedApp) {
+      throw new BadRequestException("Los terminos aceptados no corresponden a esta app");
+    }
+  }
+
+  private resolveTermsApp(role: UserRole): "cliente" | "negocio" | "repartidor" {
+    if (role === "BUSINESS_OWNER") {
+      return "negocio";
+    }
+
+    if (role === "COURIER") {
+      return "repartidor";
+    }
+
+    return "cliente";
+  }
+
+  private getGoogleClientIds(): string[] {
+    return [
+      process.env.GOOGLE_CLIENT_IDS,
+      process.env.GOOGLE_WEB_CLIENT_ID,
+      process.env.GOOGLE_IOS_CLIENT_ID,
+      process.env.GOOGLE_ANDROID_CLIENT_ID
+    ]
+      .flatMap((value) => value?.split(",") ?? [])
+      .map((value) => value.trim())
+      .filter(Boolean);
+  }
+
+  private async buildAvailableUsername(email: string): Promise<string> {
+    const [localPart] = email.split("@");
+    const base = localPart
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]/g, "")
+      .replace(/^[._-]+|[._-]+$/g, "")
+      .slice(0, 24) || "google";
+
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const suffix = attempt === 0 ? "" : `-${attempt + 1}`;
+      const candidate = `${base}${suffix}`;
+
+      if (!(await this.usersService.findByUsername(candidate))) {
+        return candidate;
+      }
+    }
+
+    return `${base}-${randomBytes(4).toString("hex")}`;
   }
 
   private hashPassword(password: string): string {

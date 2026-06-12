@@ -5,6 +5,7 @@ import apiClient from './apiClient';
 
 export async function registerPushNotifications(app: 'cliente' | 'negocio' | 'repartidor') {
   if (Platform.OS === 'android' && Constants.appOwnership === 'expo') {
+    console.warn('Push remoto no disponible en Expo Go para Android. Usa development build o APK/AAB.');
     return;
   }
 
@@ -24,7 +25,7 @@ export async function registerPushNotifications(app: 'cliente' | 'negocio' | 're
       name: 'Pedidos',
       importance: Notifications.AndroidImportance.HIGH,
       vibrationPattern: [0, 250, 250, 250],
-      lightColor: '#0F766E',
+      lightColor: '#2563EB',
     });
   }
 
@@ -34,6 +35,7 @@ export async function registerPushNotifications(app: 'cliente' | 'negocio' | 're
     : await Notifications.requestPermissionsAsync();
 
   if (!finalPermissions.granted) {
+    console.warn('Permiso de notificaciones no concedido.');
     return;
   }
 
@@ -43,10 +45,12 @@ export async function registerPushNotifications(app: 'cliente' | 'negocio' | 're
     Constants.expoConfig?.extra?.eas?.projectId;
 
   if (!projectId) {
+    console.warn('No se encontro EAS projectId para registrar push notifications.');
     return;
   }
 
   const token = await Notifications.getExpoPushTokenAsync({ projectId });
+  console.log('Expo push token registrado', token.data);
   await apiClient.post('/notifications/push-token', {
     token: token.data,
     app,

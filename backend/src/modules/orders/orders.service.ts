@@ -8,7 +8,7 @@ import {
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { randomUUID } from "node:crypto";
-import { DataSource, EntityManager, Repository } from "typeorm";
+import { DataSource, EntityManager, LessThanOrEqual, MoreThan, Repository } from "typeorm";
 
 import { BusinessesService } from "../businesses/businesses.service";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -34,7 +34,10 @@ import { CourierProfile } from "../users/courier-profile.entity";
 import { assertInsideVegaServiceaddress } from "src/common/geo/vega-zone";
 import { MonitoringService } from "../monitoring/monitoring.service";
 import { Payment } from "../payments/payment.entity";
-import { PaymentProviderService } from "../payments/payment-provider.service";
+import { CashSettlement } from "../payments/cash-settlement.entity";
+import { PaymentProcessingQueue } from "../payments/payment-processing.queue";
+import { PaymentProviderService, ProviderTransfer } from "../payments/payment-provider.service";
+import { StripeConnectService } from "../stripe-connect/stripe-connect.service";
 import type { OrderLifecycleJob } from "./order-processing.queue";
 
 export type DeliveryOfferSummary = {
@@ -48,6 +51,12 @@ export type DeliveryOfferSummary = {
 @Injectable()
 export class OrdersService {
   private readonly pendingCreations = new Map<string, Promise<OrderGroup>>();
+  private readonly activeCourierDeliveryStatuses = new Set<string>([
+    "ASSIGNED",
+    "PARTIALLY_PICKED_UP",
+    "PICKED_UP",
+    "ON_THE_WAY"
+  ]);
 
   constructor(
     @InjectRepository(Order)
@@ -62,11 +71,15 @@ export class OrdersService {
     private readonly courierProfileRepository: Repository<CourierProfile>,
     @InjectRepository(Payment)
     private readonly paymentRepository: Repository<Payment>,
+    @InjectRepository(CashSettlement)
+    private readonly cashSettlementRepository: Repository<CashSettlement>,
     private readonly dataSource: DataSource,
     private readonly businessesService: BusinessesService,
     private readonly orderProcessingQueue: OrderProcessingQueue,
     private readonly notificationsService: NotificationsService,
     private readonly paymentProviderService: PaymentProviderService,
+    private readonly paymentProcessingQueue: PaymentProcessingQueue,
+    private readonly stripeConnectService: StripeConnectService,
     @Optional()
     private readonly monitoring?: MonitoringService
   ) { }
@@ -116,7 +129,9 @@ export class OrdersService {
     dto: CreateOrderDto
   ): Promise<OrderGroup> {
 
-    if (dto.latitude !== undefined && dto.longitude !== undefined) {
+    const fulfillmentMethod = dto.fulfillmentMethod ?? "DELIVERY";
+
+    if (fulfillmentMethod === "DELIVERY" && dto.latitude !== undefined && dto.longitude !== undefined) {
       assertInsideVegaServiceaddress({
         latitude: dto.latitude,
         longitude: dto.longitude
@@ -154,13 +169,21 @@ export class OrdersService {
             throw new ConflictException(`Business ${product.businessId} is closed`);
           }
 
+          const minimumQuantity = product.minimumQuantityPerOrder ?? 1;
+          if (item.quantity < minimumQuantity) {
+            throw new ConflictException(
+              `${product.name} requires at least ${minimumQuantity} per order`
+            );
+          }
+
           const unitPriceCents = Number(product.priceCents);
           const lineItem: OrderItemSnapshot = {
             productId: product.id,
             productName: product.name,
             quantity: item.quantity,
             unitPriceCents,
-            lineTotalCents: unitPriceCents * item.quantity
+            lineTotalCents: unitPriceCents * item.quantity,
+            minimumQuantityPerOrder: minimumQuantity
           };
 
           const items = businessOrderItems.get(product.businessId) ?? [];
@@ -170,6 +193,17 @@ export class OrdersService {
 
         const orderGroupId = randomUUID();
         let shouldStoreIdempotencyKey = true;
+        const paymentMethod = dto.paymentMethod ?? "CARD";
+        let shouldAttachDeliveryFinancials = fulfillmentMethod === "DELIVERY";
+        const deliveryFeeCents = fulfillmentMethod === "DELIVERY" ? this.deliveryFeeCents() : 0;
+        const courierPayoutCents = fulfillmentMethod === "DELIVERY" ? this.courierPayoutCents() : 0;
+        const platformDeliveryMarginCents = deliveryFeeCents - courierPayoutCents;
+        const businessCommissionBps = this.platformFeeBasisPoints(paymentMethod);
+        const orderSubtotalCents = [...businessOrderItems.values()]
+          .flat()
+          .reduce((sum, item) => sum + item.lineTotalCents, 0);
+
+        this.assertCardPaymentMinimum(paymentMethod, orderSubtotalCents);
 
         for (const [businessId, items] of businessOrderItems.entries()) {
 
@@ -180,18 +214,31 @@ export class OrdersService {
             throw new NotFoundException("Business not found");
           }
 
+          this.assertBusinessCheckoutRules(business, paymentMethod);
+
           const subtotalCents = items.reduce((sum, item) => sum + item.lineTotalCents, 0);
+          const businessCommissionCents = Math.floor((subtotalCents * businessCommissionBps) / 10_000);
+          const businessPayoutCents = subtotalCents - businessCommissionCents;
           const order = manager.create(Order, {
             userId: customerId,
             businessId,
             orderGroupId,
             idempotencyKey: shouldStoreIdempotencyKey ? idempotencyKey : null,
             status: "PENDING",
+            paymentMethod,
+            fulfillmentMethod,
             subtotalCents,
-            totalPrice: subtotalCents / 100,
+            deliveryFeeCents: shouldAttachDeliveryFinancials ? deliveryFeeCents : 0,
+            courierPayoutCents: shouldAttachDeliveryFinancials ? courierPayoutCents : 0,
+            courierPayoutStatus: shouldAttachDeliveryFinancials && courierPayoutCents > 0 ? "PENDING" : "NOT_APPLICABLE",
+            platformDeliveryMarginCents: shouldAttachDeliveryFinancials ? platformDeliveryMarginCents : 0,
+            businessCommissionCents,
+            businessPayoutCents,
+            businessCashPayoutStatus: paymentMethod === "CASH" && businessPayoutCents > 0 ? "PENDING" : "NOT_APPLICABLE",
+            totalPrice: (subtotalCents + (shouldAttachDeliveryFinancials ? deliveryFeeCents : 0)) / 100,
             deliveryAddress: dto.deliveryAddress.trim(),
-            customerLatitude: dto.latitude,
-            customerLongitude: dto.longitude,
+            customerLatitude: fulfillmentMethod === "DELIVERY" ? dto.latitude : null,
+            customerLongitude: fulfillmentMethod === "DELIVERY" ? dto.longitude : null,
             businessLatitude: business.latitude,
             businessLongitude: business.longitude,
             businessAddress: business.address,
@@ -206,10 +253,16 @@ export class OrdersService {
           });
 
           shouldStoreIdempotencyKey = false;
+          shouldAttachDeliveryFinancials = false;
           await manager.save(Order, order);
         }
 
         const orderGroup = await this.loadOrderGroup(orderGroupId, manager);
+        if (paymentMethod === "CASH") {
+          for (const businessOrder of orderGroup.businessOrders) {
+            await this.orderProcessingQueue.addBusinessAcceptanceTimeout(orderGroupId, businessOrder.id);
+          }
+        }
         this.monitoring?.recordOrderEvent("created", {
           orderGroupId,
           customerId,
@@ -290,16 +343,17 @@ export class OrdersService {
     return Promise.all(orderGroupIds.map((orderGroupId) => this.loadOrderGroup(orderGroupId)));
   }
 
-  async findReadyForCourier(): Promise<OrderGroup[]> {
+  async findReadyForCourier(courierId: string): Promise<OrderGroup[]> {
+    if (await this.isCourierBlockedFromNewOrders(courierId)) {
+      return [];
+    }
+
     const orders = await this.orderRepository.find({
       relations: ["items"],
       order: { createdAt: "DESC" }
     });
     const groups = this.groupOrders(orders);
-    const readyGroups = groups.filter((groupOrders) =>
-      this.deriveOrderGroupStatus(groupOrders.map((order) => order.status as BusinessOrderStatus)) ===
-      "READY_FOR_PICKUP"
-    );
+    const readyGroups = groups.filter((groupOrders) => this.hasCollectableOrders(groupOrders));
 
     return Promise.all(
       readyGroups.map(async (groupOrders) => {
@@ -360,8 +414,16 @@ export class OrdersService {
       throw new NotFoundException("Business order not found for business");
     }
 
-    if (nextStatus !== "REJECTED" && order.paymentStatus !== "PAID") {
+    if (nextStatus !== "REJECTED" && !this.canBusinessProcessOrder(order)) {
       throw new ConflictException("Order must be paid before business processing");
+    }
+
+    if (nextStatus === "DELIVERED" && order.fulfillmentMethod !== "PICKUP") {
+      throw new ConflictException("Only pickup orders can be marked delivered by the business");
+    }
+
+    if (nextStatus === "DELIVERED" && order.fulfillmentMethod === "PICKUP" && order.paymentMethod === "CASH") {
+      throw new ConflictException("Confirm cash received to complete this pickup order");
     }
 
     this.assertValidTransition(order.status as BusinessOrderStatus, nextStatus);
@@ -373,7 +435,13 @@ export class OrdersService {
       await this.orderProcessingQueue.addBusinessReadyTimeout(order.orderGroupId, order.id);
     }
 
-    if (order.status === "READY") {
+    if (order.status === "READY" && order.courierId) {
+      await this.notificationsService.sendToUser(order.courierId, {
+        title: "Orden lista para recoger",
+        body: "Una orden de tu multipedido ya esta lista en el comercio.",
+        data: { type: "BUSINESS_ORDER_READY", orderGroupId: order.orderGroupId, businessOrderId: order.id }
+      });
+    } else if (order.status === "READY" && order.fulfillmentMethod === "DELIVERY") {
       await this.enqueueDeliveryOfferGeneration(order.orderGroupId);
     }
     this.monitoring?.recordOrderEvent("business_status_updated", {
@@ -382,15 +450,79 @@ export class OrdersService {
       businessId,
       status: order.status
     });
-    await this.notifyCustomerOrderStatus(order.orderGroupId, order.status as BusinessOrderStatus);
+
+    if (nextStatus === "REJECTED") {
+      await this.handleBusinessOrderRejected(savedOrder);
+    } else {
+      await this.notifyCustomerOrderStatus(order.orderGroupId, order.status as BusinessOrderStatus);
+    }
 
     return this.mapBusinessOrder(savedOrder);
+  }
+
+  async confirmBusinessCashPayout(
+    ownerUserId: string,
+    businessId: string,
+    businessOrderId: string
+  ): Promise<BusinessOrder> {
+    await this.assertBusinessOwner(ownerUserId, businessId);
+
+    const order = await this.orderRepository.findOne({
+      where: { id: businessOrderId, businessId },
+      relations: ["items"] as never
+    });
+
+    if (!order) {
+      throw new NotFoundException("Business order not found for business");
+    }
+
+    if (order.paymentMethod !== "CASH") {
+      throw new ConflictException("This business order was not paid in cash");
+    }
+
+    if (Number(order.businessPayoutCents ?? 0) <= 0) {
+      throw new ConflictException("This business order has no business payout");
+    }
+
+    if (order.fulfillmentMethod === "PICKUP") {
+      if (!["READY", "DELIVERED"].includes(order.status as string)) {
+        throw new ConflictException("Cash payment can be confirmed when the pickup order is ready");
+      }
+
+      order.paymentStatus = "PAID";
+      order.paidAt = order.paidAt ?? new Date();
+      order.cashCollectedAt = order.cashCollectedAt ?? order.paidAt;
+      order.cashReceivedCents = order.cashReceivedCents ?? order.subtotalCents;
+      order.cashChangeCents = order.cashChangeCents ?? 0;
+      order.status = "DELIVERED";
+    } else if (order.status !== "DELIVERED" || order.paymentStatus !== "PAID") {
+      throw new ConflictException("Cash payout can be confirmed after the order is delivered and paid");
+    }
+
+    if (order.businessCashPayoutStatus === "CONFIRMED") {
+      return this.mapBusinessOrder(order);
+    }
+
+    if (order.businessCashPayoutStatus === "CANCELLED") {
+      throw new ConflictException("This business cash payout was cancelled");
+    }
+
+    order.businessCashPayoutStatus = "CONFIRMED";
+    order.businessCashPayoutConfirmedAt = new Date();
+    order.businessCashPayoutConfirmedByUserId = ownerUserId;
+
+    const savedOrder = await this.orderRepository.save(order);
+    return this.mapBusinessOrder(savedOrder as Order);
   }
 
   async updateCourierAvailability(
     courierId: string,
     dto: UpdateCourierAvailabilityDto
   ): Promise<CourierProfile> {
+    if (dto.status === "AVAILABLE") {
+      await this.assertCourierCanReceiveNewOrders(courierId);
+    }
+
     if (dto.latitude !== undefined || dto.longitude !== undefined) {
       if (dto.latitude === undefined || dto.longitude === undefined) {
         throw new BadRequestException("Both latitude and longitude are required");
@@ -402,14 +534,16 @@ export class OrdersService {
       });
     }
 
-    const profile = this.courierProfileRepository.create({
-      userId: courierId,
-      availabilityStatus: dto.status,
-      preferredLatitude: dto.latitude,
-      preferredLongitude: dto.longitude,
-      preferredRadiusKm: dto.preferredRadiusKm ?? 35,
-      maxDeliveryDistanceKm: dto.maxDeliveryDistanceKm ?? 35
-    });
+    const profile = await this.ensureCourierProfile(courierId);
+    profile.availabilityStatus = dto.status;
+
+    if (dto.latitude !== undefined && dto.longitude !== undefined) {
+      profile.preferredLatitude = dto.latitude;
+      profile.preferredLongitude = dto.longitude;
+    }
+
+    profile.preferredRadiusKm = dto.preferredRadiusKm ?? profile.preferredRadiusKm ?? 35;
+    profile.maxDeliveryDistanceKm = dto.maxDeliveryDistanceKm ?? profile.maxDeliveryDistanceKm ?? 35;
 
     const savedProfile = await this.courierProfileRepository.save(profile);
 
@@ -420,7 +554,93 @@ export class OrdersService {
     return savedProfile;
   }
 
+  async getCourierStripeConnectProfile(courierId: string): Promise<CourierProfile> {
+    return this.ensureCourierProfile(courierId);
+  }
+
+  async createCourierStripeConnectAccount(courierId: string): Promise<CourierProfile> {
+    let profile = await this.ensureCourierProfile(courierId);
+
+    if (profile.stripeConnectedAccountId) {
+      profile = await this.refreshCourierStripeConnectStatusForProfile(profile);
+      if (profile.stripeConnectedAccountId) {
+        return profile;
+      }
+    }
+
+    const user = await this.userRepository.findOne({ where: { id: courierId } });
+
+    if (!user) {
+      throw new NotFoundException("Courier not found");
+    }
+
+    const account = await this.stripeConnectService.createExpressAccount({
+      email: user.email,
+      profileName: user.fullName,
+      requestTransfers: true,
+      requestCardPayments: false,
+      fallbackPlatformAccountId: profile.stripePlatformAccountId,
+      metadata: {
+        courier_user_id: courierId
+      }
+    });
+
+    profile.stripeConnectedAccountId = account.accountId;
+    profile.stripePlatformAccountId = account.platformAccountId;
+    profile.stripeChargesEnabled = false;
+    profile.stripePayoutsEnabled = false;
+    profile.stripeDetailsSubmitted = false;
+    profile.stripeRequirementsCurrentlyDue = null;
+
+    return this.courierProfileRepository.save(profile);
+  }
+
+  async createCourierStripeOnboardingLink(courierId: string): Promise<{ url: string; profile: CourierProfile }> {
+    let profile = await this.ensureCourierProfile(courierId);
+
+    if (profile.stripeConnectedAccountId) {
+      profile = await this.refreshCourierStripeConnectStatusForProfile(profile);
+    }
+
+    if (!profile.stripeConnectedAccountId) {
+      profile = await this.createCourierStripeConnectAccount(courierId);
+    }
+
+    const normalizedAppBaseUrl = this.stripeConnectService.requireReturnBaseUrl({
+      primaryEnvKey: "COURIER_APP_URL",
+      fallbackEnvKey: "PUBLIC_API_URL",
+      label: "COURIER_APP_URL or PUBLIC_API_URL"
+    });
+    const url = await this.stripeConnectService.createOnboardingLink({
+      connectedAccountId: profile.stripeConnectedAccountId ?? "",
+      refreshUrl: `${normalizedAppBaseUrl}/courier-stripe-refresh?courierId=${profile.userId}`,
+      returnUrl: `${normalizedAppBaseUrl}/courier-stripe-return?courierId=${profile.userId}`
+    });
+
+    return { url, profile };
+  }
+
+  async refreshCourierStripeConnectStatus(courierId: string): Promise<CourierProfile> {
+    const profile = await this.ensureCourierProfile(courierId);
+    const refreshedProfile = await this.refreshCourierStripeConnectStatusForProfile(profile);
+
+    if (refreshedProfile.stripePayoutsEnabled) {
+      await this.enqueueRecoverableCourierPayouts(courierId);
+    }
+
+    return refreshedProfile;
+  }
+
+  async refreshCourierStripeConnectStatusFromReturn(courierId: string): Promise<CourierProfile> {
+    const profile = await this.ensureCourierProfile(courierId);
+    return this.refreshCourierStripeConnectStatusForProfile(profile);
+  }
+
   async findOffersForCourier(courierId: string): Promise<DeliveryOfferSummary[]> {
+    if (await this.isCourierBlockedFromNewOrders(courierId)) {
+      return [];
+    }
+
     await this.expireStaleOffers();
     await this.ensureDeliveryOffersForAvailableCourier(courierId);
 
@@ -446,7 +666,7 @@ export class OrdersService {
 
         const courierOrder = await this.attachCustomerDetails(this.mapCourierOrderGroup(orders));
 
-        if (courierOrder.status === "READY_FOR_PICKUP") {
+        if (this.hasCollectableOrders(orders)) {
           summaries.push({
             id: offer.id,
             status: offer.status,
@@ -483,11 +703,7 @@ export class OrdersService {
         continue;
       }
 
-      const groupStatus = this.deriveOrderGroupStatus(
-        orders.map((order) => order.status as BusinessOrderStatus)
-      );
-
-      if (groupStatus !== "READY_FOR_PICKUP") {
+      if (!this.hasCollectableOrders(orders)) {
         continue;
       }
 
@@ -512,7 +728,7 @@ export class OrdersService {
       where: { orderGroupId, status: "PENDING" }
     });
 
-    const paidPendingOrders = orders.filter((order) => order.paymentStatus === "PAID");
+    const paidPendingOrders = orders.filter((order) => this.canBusinessProcessOrder(order));
 
     for (const order of paidPendingOrders) {
       await this.orderProcessingQueue.addBusinessAcceptanceTimeout(order.orderGroupId, order.id);
@@ -528,7 +744,10 @@ export class OrdersService {
 
   async scheduleRecoverableLifecycleTimeouts(): Promise<void> {
     const paidActiveOrders = await this.orderRepository.find({
-      where: { paymentStatus: "PAID" }
+      where: [
+        { paymentStatus: "PAID" },
+        { paymentMethod: "CASH" }
+      ]
     });
 
     for (const order of paidActiveOrders) {
@@ -545,6 +764,8 @@ export class OrdersService {
     for (const orderGroupId of readyOrderGroupIds) {
       await this.orderProcessingQueue.addDeliveryOfferTimeout(orderGroupId);
     }
+
+    await this.scheduleRecoverableCourierDeliveryTimeouts(paidActiveOrders);
   }
 
   async handleLifecycleJob(job: OrderLifecycleJob): Promise<void> {
@@ -558,10 +779,17 @@ export class OrdersService {
       return;
     }
 
+    if (job.type === "COURIER_DELIVERY_TIMEOUT") {
+      await this.handleCourierDeliveryTimeout(job.orderGroupId);
+      return;
+    }
+
     await this.handleDeliveryOfferTimeout(job.orderGroupId);
   }
 
   async acceptDeliveryOffer(courierId: string, offerId: string): Promise<OrderGroup> {
+    await this.assertCourierCanReceiveNewOrders(courierId);
+
     return this.dataSource.transaction(async (manager) => {
       const offer = await manager.findOne(DeliveryOffer, {
         where: { id: offerId },
@@ -595,11 +823,7 @@ export class OrdersService {
         throw new NotFoundException("Order not found");
       }
 
-      const groupStatus = this.deriveOrderGroupStatus(
-        orders.map((order) => order.status as BusinessOrderStatus)
-      );
-
-      if (groupStatus !== "READY_FOR_PICKUP") {
+      if (!this.hasCollectableOrders(orders)) {
         offer.status = "CANCELLED";
         await manager.save(DeliveryOffer, offer);
         throw new ConflictException("Order is no longer ready for pickup");
@@ -613,7 +837,9 @@ export class OrdersService {
 
       for (const order of orders) {
         order.courierId = courierId;
-        order.status = "ASSIGNED";
+        if (order.status === "READY") {
+          order.status = "ASSIGNED";
+        }
         order.items = await manager.find(OrderItem, {
           where: { orderId: order.id }
         });
@@ -645,6 +871,7 @@ export class OrdersService {
 
       await manager.save(Order, orders);
       await manager.save(DeliveryOffer, [offer, ...cancelledOffers]);
+      await this.orderProcessingQueue.addCourierDeliveryTimeout(offer.orderGroupId);
       this.monitoring?.recordOrderEvent("offer_accepted", {
         orderGroupId: offer.orderGroupId,
         offerId: offer.id,
@@ -663,8 +890,9 @@ export class OrdersService {
   }
 
   async assignToCourier(courierId: string, orderGroupId: string): Promise<OrderGroup> {
-    return this.dataSource.transaction(async (manager) => {
+    await this.assertCourierCanReceiveNewOrders(courierId);
 
+    return this.dataSource.transaction(async (manager) => {
       const orders = await manager.find(Order, {
         where: { orderGroupId },
         lock: { mode: "pessimistic_write" }
@@ -674,11 +902,7 @@ export class OrdersService {
         throw new NotFoundException("Order not found");
       }
 
-      const groupStatus = this.deriveOrderGroupStatus(
-        orders.map((order) => order.status as BusinessOrderStatus)
-      );
-
-      if (groupStatus !== "READY_FOR_PICKUP") {
+      if (!this.hasCollectableOrders(orders)) {
         throw new ConflictException("Order is not ready for pickup");
       }
 
@@ -688,7 +912,9 @@ export class OrdersService {
 
       for (const order of orders) {
         order.courierId = courierId;
-        order.status = "ASSIGNED";
+        if (order.status === "READY") {
+          order.status = "ASSIGNED";
+        }
 
         order.items = await manager.find(OrderItem, {
           where: { orderId: order.id }
@@ -696,6 +922,7 @@ export class OrdersService {
       }
 
       await manager.save(Order, orders);
+      await this.orderProcessingQueue.addCourierDeliveryTimeout(orderGroupId);
 
       return this.attachCustomerDetails(this.mapCourierOrderGroup(orders));
     });
@@ -704,9 +931,11 @@ export class OrdersService {
   async updateCourierDeliveryStatus(
     courierId: string,
     orderGroupId: string,
-    nextStatus: "PICKED_UP" | "ON_THE_WAY" | "DELIVERED"
+    nextStatus: "PICKED_UP" | "ON_THE_WAY" | "DELIVERED",
+    cashReceivedCents?: number
   ): Promise<OrderGroup> {
     return this.dataSource.transaction(async (manager) => {
+      let shouldEnqueueCourierPayout = false;
 
       const orders = await manager.find(Order, {
         where: { orderGroupId },
@@ -721,14 +950,46 @@ export class OrdersService {
         throw new ForbiddenException("Order is not assigned to this courier");
       }
 
-      const currentStatus = this.deriveOrderGroupStatus(
-        orders.map((order) => order.status as BusinessOrderStatus)
+      this.assertValidCourierTransition(
+        orders.map((order) => order.status as BusinessOrderStatus),
+        nextStatus
       );
 
-      this.assertValidCourierTransition(currentStatus, nextStatus);
+      if (nextStatus === "DELIVERED") {
+        this.assertCashCollectionForDelivery(orders, cashReceivedCents);
+      }
+
+      const groupTotalCents = this.totalCentsForOrders(orders);
+      const cashCollectedAt = nextStatus === "DELIVERED" && orders[0].paymentMethod === "CASH"
+        ? new Date()
+        : null;
 
       for (const order of orders) {
-        order.status = nextStatus;
+        if (nextStatus === "PICKED_UP") {
+          if (["ASSIGNED", "READY"].includes(order.status as string)) {
+            order.status = "PICKED_UP";
+          }
+        } else {
+          order.status = nextStatus;
+        }
+
+        if (cashCollectedAt) {
+          order.cashReceivedCents = cashReceivedCents;
+          order.cashChangeCents = cashReceivedCents === undefined ? null : cashReceivedCents - groupTotalCents;
+          order.cashCollectedAt = cashCollectedAt;
+          order.paymentStatus = "PAID";
+          order.paidAt = cashCollectedAt;
+        }
+
+        if (
+          nextStatus === "DELIVERED" &&
+          order.paymentMethod === "CARD" &&
+          order.paymentStatus === "PAID" &&
+          order.courierPayoutStatus === "PENDING" &&
+          Number(order.courierPayoutCents ?? 0) > 0
+        ) {
+          shouldEnqueueCourierPayout = true;
+        }
 
         order.items = await manager.find(OrderItem, {
           where: { orderId: order.id }
@@ -770,6 +1031,62 @@ export class OrdersService {
         title: this.notificationTitleForCourierStatus(nextStatus),
         body: this.notificationBodyForCourierStatus(nextStatus),
         data: { type: "ORDER_STATUS", orderGroupId, status: nextStatus }
+      });
+
+      if (shouldEnqueueCourierPayout) {
+        await this.paymentProcessingQueue.addCourierPayout(orderGroupId);
+      }
+
+      if (cashCollectedAt) {
+        await this.notifyBusinessesCashPayoutPending(orders);
+      }
+
+      return this.attachCustomerDetails(this.mapCourierOrderGroup(orders));
+    });
+  }
+
+  async markBusinessOrderPickedUp(
+    courierId: string,
+    orderGroupId: string,
+    businessOrderId: string
+  ): Promise<OrderGroup> {
+    return this.dataSource.transaction(async (manager) => {
+      const orders = await manager.find(Order, {
+        where: { orderGroupId },
+        lock: { mode: "pessimistic_write" }
+      });
+
+      if (!orders.length) {
+        throw new NotFoundException("Order not found");
+      }
+
+      if (orders.some((order) => order.courierId !== courierId)) {
+        throw new ForbiddenException("Order is not assigned to this courier");
+      }
+
+      const order = orders.find((current) => current.id === businessOrderId);
+
+      if (!order) {
+        throw new NotFoundException("Business order not found");
+      }
+
+      if (!["ASSIGNED", "READY"].includes(order.status as string)) {
+        throw new ConflictException("Business order is not ready for pickup");
+      }
+
+      order.status = "PICKED_UP";
+
+      for (const current of orders) {
+        current.items = await manager.find(OrderItem, {
+          where: { orderId: current.id }
+        });
+      }
+
+      await manager.save(Order, order);
+      this.monitoring?.recordOrderEvent("business_order_picked_up", {
+        orderGroupId,
+        businessOrderId,
+        courierId
       });
 
       return this.attachCustomerDetails(this.mapCourierOrderGroup(orders));
@@ -838,6 +1155,42 @@ export class OrdersService {
     return { ok: true };
   }
 
+  async notifyCustomerCourierArrived(
+    courierId: string,
+    orderGroupId: string
+  ): Promise<{ ok: true; alreadyNotified: boolean }> {
+    const orders = await this.orderRepository.find({ where: { orderGroupId } });
+    const [firstOrder] = orders;
+
+    if (!firstOrder) {
+      throw new NotFoundException("Order not found");
+    }
+
+    if (orders.some((order) => order.courierId !== courierId)) {
+      throw new ForbiddenException("Only the assigned courier can notify arrival");
+    }
+
+    const groupStatus = this.deriveOrderGroupStatus(
+      orders.map((order) => order.status as BusinessOrderStatus)
+    );
+
+    if (groupStatus !== "ON_THE_WAY") {
+      throw new ConflictException("Arrival can only be notified while the order is on the way");
+    }
+
+    if (firstOrder.arrivalNotifiedAt) {
+      return { ok: true, alreadyNotified: true };
+    }
+
+    for (const order of orders) {
+      order.arrivalNotifiedAt = new Date();
+    }
+
+    await this.orderRepository.save(orders);
+    await this.sendCourierArrivedNotification(firstOrder);
+    return { ok: true, alreadyNotified: false };
+  }
+
   async getDeliveryLocation(requestUserId: string, orderGroupId: string) {
     const orders = await this.orderRepository.find({ where: { orderGroupId } });
 
@@ -903,11 +1256,13 @@ export class OrdersService {
   private mapOrderGroup(orders: Order[]): OrderGroup {
     const [firstOrder] = orders;
     const businessOrders = orders.map((order) => this.mapBusinessOrder(order));
+    const courierPayoutOrder = orders.find((order) => Number(order.courierPayoutCents ?? 0) > 0);
 
     return {
       id: firstOrder.orderGroupId,
       customerId: firstOrder.userId,
       deliveryAddress: firstOrder.deliveryAddress,
+      fulfillmentMethod: firstOrder.fulfillmentMethod,
       status: this.deriveOrderGroupStatus(
         businessOrders.map((businessOrder) => businessOrder.status)
       ),
@@ -915,10 +1270,26 @@ export class OrdersService {
       totalCents: businessOrders.reduce(
         (sum, businessOrder) => sum + businessOrder.subtotalCents,
         0
+      ) + orders.reduce((sum, order) => sum + Number(order.deliveryFeeCents ?? 0), 0),
+      subtotalCents: businessOrders.reduce(
+        (sum, businessOrder) => sum + businessOrder.subtotalCents,
+        0
       ),
+      deliveryFeeCents: orders.reduce((sum, order) => sum + Number(order.deliveryFeeCents ?? 0), 0),
+      courierPayoutCents: orders.reduce((sum, order) => sum + Number(order.courierPayoutCents ?? 0), 0),
+      courierPayoutStatus: courierPayoutOrder?.courierPayoutStatus,
+      courierPayoutPaidAt: courierPayoutOrder?.courierPayoutPaidAt,
+      courierPayoutProviderTransferId: courierPayoutOrder?.courierPayoutProviderTransferId,
+      courierPayoutFailedAt: courierPayoutOrder?.courierPayoutFailedAt,
+      courierPayoutError: courierPayoutOrder?.courierPayoutError,
+      platformDeliveryMarginCents: orders.reduce((sum, order) => sum + Number(order.platformDeliveryMarginCents ?? 0), 0),
       createdAt: firstOrder.createdAt,
       courierId: firstOrder.courierId,
+      paymentMethod: firstOrder.paymentMethod,
       paymentStatus: firstOrder.paymentStatus,
+      cashReceivedCents: firstOrder.cashReceivedCents,
+      cashChangeCents: firstOrder.cashChangeCents,
+      cashCollectedAt: firstOrder.cashCollectedAt,
       paidAt: firstOrder.paidAt
     };
   }
@@ -944,6 +1315,102 @@ export class OrdersService {
     };
   }
 
+  private async scheduleRecoverableCourierDeliveryTimeouts(orders: Order[]): Promise<void> {
+    const activeOrderGroupIds = [...new Set(
+      orders
+        .filter((order) => order.courierId && this.activeCourierDeliveryStatuses.has(order.status as string))
+        .map((order) => order.orderGroupId)
+        .filter(Boolean)
+    )];
+
+    for (const orderGroupId of activeOrderGroupIds) {
+      const acceptedOffer = await this.deliveryOfferRepository.findOne({
+        where: { orderGroupId, status: "ACCEPTED" },
+        order: { acceptedAt: "DESC" }
+      });
+      const groupOrders = orders.filter((order) => order.orderGroupId === orderGroupId);
+      const assignedAt = acceptedOffer?.acceptedAt ?? groupOrders
+        .map((order) => order.updatedAt)
+        .filter(Boolean)
+        .sort((left, right) => left.getTime() - right.getTime())[0];
+
+      await this.orderProcessingQueue.addCourierDeliveryTimeout(
+        orderGroupId,
+        this.remainingCourierDeliveryTimeoutMs(assignedAt)
+      );
+    }
+  }
+
+  private remainingCourierDeliveryTimeoutMs(startedAt?: Date | null): number {
+    if (!startedAt) {
+      return this.courierDeliveryTimeoutMs();
+    }
+
+    return Math.max(0, startedAt.getTime() + this.courierDeliveryTimeoutMs() - Date.now());
+  }
+
+  private courierDeliveryTimeoutMs(): number {
+    const configuredMinutes = Number(process.env.COURIER_DELIVERY_TIMEOUT_MINUTES ?? 40);
+    const safeMinutes = Number.isFinite(configuredMinutes) && configuredMinutes > 0 ? configuredMinutes : 40;
+    return safeMinutes * 60_000;
+  }
+
+  private async handleCourierDeliveryTimeout(orderGroupId: string): Promise<void> {
+    const orders = await this.orderRepository.find({
+      where: { orderGroupId }
+    });
+
+    if (
+      !orders.length ||
+      !orders.some((order) => order.courierId) ||
+      !orders.some((order) => this.activeCourierDeliveryStatuses.has(order.status as string))
+    ) {
+      return;
+    }
+
+    const courierIds = [...new Set(
+      orders
+        .map((order) => order.courierId)
+        .filter((courierId): courierId is string => Boolean(courierId))
+    )];
+
+    await this.cancelOrderGroupAndRefund(
+      orderGroupId,
+      "COURIER_DELIVERY_TIMEOUT",
+      "El repartidor no completo la entrega a tiempo. Cancelamos el pedido y procesamos el reembolso si el pago ya fue confirmado."
+    );
+
+    for (const courierId of courierIds) {
+      await this.markCourierAvailableIfNoActiveDeliveries(courierId);
+    }
+  }
+
+  private async markCourierAvailableIfNoActiveDeliveries(courierId: string): Promise<void> {
+    const assignedOrders = await this.orderRepository.find({
+      where: { courierId }
+    });
+    const hasActiveDelivery = this.groupOrders(assignedOrders).some((groupOrders) =>
+      this.activeCourierDeliveryStatuses.has(
+        this.deriveOrderGroupStatus(
+          groupOrders.map((order) => order.status as BusinessOrderStatus)
+        )
+      )
+    );
+
+    if (hasActiveDelivery) {
+      return;
+    }
+
+    const profile = await this.courierProfileRepository.findOne({
+      where: { userId: courierId }
+    });
+
+    if (profile) {
+      profile.availabilityStatus = "AVAILABLE";
+      await this.courierProfileRepository.save(profile);
+    }
+  }
+
   private async handleBusinessAcceptanceTimeout(
     orderGroupId: string,
     businessOrderId: string
@@ -952,7 +1419,7 @@ export class OrdersService {
       where: { id: businessOrderId, orderGroupId }
     });
 
-    if (!order || order.status !== "PENDING" || order.paymentStatus !== "PAID") {
+    if (!order || order.status !== "PENDING" || !this.canBusinessProcessOrder(order)) {
       return;
     }
 
@@ -973,7 +1440,7 @@ export class OrdersService {
 
     if (
       !order ||
-      order.paymentStatus !== "PAID" ||
+      !this.canBusinessProcessOrder(order) ||
       !["ACCEPTED", "PREPARING"].includes(order.status as string)
     ) {
       return;
@@ -983,6 +1450,31 @@ export class OrdersService {
       orderGroupId,
       "BUSINESS_READY_TIMEOUT",
       "El negocio no marco el pedido como listo a tiempo."
+    );
+  }
+
+  private async handleBusinessOrderRejected(rejectedOrder: Order): Promise<void> {
+    const orders = await this.orderRepository.find({
+      where: { orderGroupId: rejectedOrder.orderGroupId }
+    });
+
+    if (orders.length <= 1) {
+      await this.notifyCustomerOrderStatus(rejectedOrder.orderGroupId, "REJECTED");
+      return;
+    }
+
+    const rejectedBusiness = await this.businessesService.findById(rejectedOrder.businessId);
+    const rejectedBusinessName = rejectedBusiness.name ?? "un negocio";
+
+    await this.cancelOrderGroupAndRefund(
+      rejectedOrder.orderGroupId,
+      "BUSINESS_REJECTED",
+      `${rejectedBusinessName} rechazo el pedido. Cancelamos el multipedido y procesamos el reembolso si el pago ya fue confirmado.`,
+      {
+        rejectedBusinessId: rejectedOrder.businessId,
+        rejectedBusinessOrderId: rejectedOrder.id,
+        rejectedBusinessName
+      }
     );
   }
 
@@ -996,8 +1488,7 @@ export class OrdersService {
     if (
       !orders.length ||
       orders.some((order) => order.courierId) ||
-      this.deriveOrderGroupStatus(orders.map((order) => order.status as BusinessOrderStatus)) !==
-      "READY_FOR_PICKUP"
+      !this.hasCollectableOrders(orders)
     ) {
       return;
     }
@@ -1036,8 +1527,7 @@ export class OrdersService {
       if (
         !orders.length ||
         orders.some((order) => order.courierId) ||
-        this.deriveOrderGroupStatus(orders.map((order) => order.status as BusinessOrderStatus)) !==
-        "READY_FOR_PICKUP"
+        !this.hasCollectableOrders(orders)
       ) {
         offer.status = "CANCELLED";
         await manager.save(DeliveryOffer, offer);
@@ -1046,7 +1536,9 @@ export class OrdersService {
 
       for (const order of orders) {
         order.courierId = offer.courierId;
-        order.status = "ASSIGNED";
+        if (order.status === "READY") {
+          order.status = "ASSIGNED";
+        }
       }
 
       offer.status = "ACCEPTED";
@@ -1072,6 +1564,7 @@ export class OrdersService {
 
       await manager.save(Order, orders);
       await manager.save(DeliveryOffer, [offer, ...cancelledOffers]);
+      await this.orderProcessingQueue.addCourierDeliveryTimeout(offer.orderGroupId);
 
       this.monitoring?.recordOrderEvent("offer_auto_assigned", {
         orderGroupId: offer.orderGroupId,
@@ -1097,16 +1590,22 @@ export class OrdersService {
   private async cancelOrderGroupAndRefund(
     orderGroupId: string,
     reason: string,
-    customerMessage: string
+    customerMessage: string,
+    context: {
+      rejectedBusinessId?: string;
+      rejectedBusinessOrderId?: string;
+      rejectedBusinessName?: string;
+    } = {}
   ): Promise<void> {
     const refundKey = `refund:${orderGroupId}:${reason}`;
     const payment = await this.paymentRepository.findOne({
       where: { orderGroupId, status: "SUCCEEDED" },
       order: { createdAt: "DESC" }
     });
+    const transferReversals = this.providerTransfersFromMetadata(payment?.providerMetadata);
 
     const refund = payment
-      ? await this.paymentProviderService.refundPayment(payment.providerPaymentId, refundKey)
+      ? await this.paymentProviderService.refundPayment(payment.providerPaymentId, refundKey, transferReversals)
       : null;
 
     await this.dataSource.transaction(async (manager) => {
@@ -1120,8 +1619,26 @@ export class OrdersService {
       }
 
       for (const order of orders) {
+        if (order.id === context.rejectedBusinessOrderId) {
+          order.status = "REJECTED";
+          order.paymentStatus = payment ? "REFUNDED" : order.paymentStatus;
+          if (order.courierPayoutStatus === "PENDING") {
+            order.courierPayoutStatus = "CANCELLED";
+          }
+          if (order.businessCashPayoutStatus === "PENDING") {
+            order.businessCashPayoutStatus = "CANCELLED";
+          }
+          continue;
+        }
+
         if (order.status !== "DELIVERED") {
           order.status = "CANCELLED";
+          if (order.courierPayoutStatus === "PENDING") {
+            order.courierPayoutStatus = "CANCELLED";
+          }
+          if (order.businessCashPayoutStatus === "PENDING") {
+            order.businessCashPayoutStatus = "CANCELLED";
+          }
         }
         order.paymentStatus = payment ? "REFUNDED" : order.paymentStatus;
       }
@@ -1142,6 +1659,7 @@ export class OrdersService {
           refundKey,
           refundProviderId: refund?.providerRefundId,
           refundStatus: refund?.status,
+          transferReversals,
           refundRaw: refund?.raw
         };
         await manager.save(Payment, payment);
@@ -1161,9 +1679,82 @@ export class OrdersService {
       await this.notificationsService.sendToUser(orders[0].userId, {
         title: "Pedido reembolsado",
         body: customerMessage,
-        data: { type: "ORDER_REFUNDED", orderGroupId, reason }
+        data: {
+          type: "ORDER_REFUNDED",
+          orderGroupId,
+          reason,
+          rejectedBusinessId: context.rejectedBusinessId,
+          rejectedBusinessName: context.rejectedBusinessName
+        }
       });
+
+      await this.notifyBusinessesOrderGroupCancelled(orders, context);
     });
+  }
+
+  private async notifyBusinessesOrderGroupCancelled(
+    orders: Order[],
+    context: {
+      rejectedBusinessId?: string;
+      rejectedBusinessName?: string;
+    }
+  ): Promise<void> {
+    if (!context.rejectedBusinessId) {
+      return;
+    }
+
+    const businesses = await Promise.all(
+      [...new Set(orders.map((order) => order.businessId))]
+        .filter((businessId) => businessId !== context.rejectedBusinessId)
+        .map((businessId) => this.businessesService.findById(businessId))
+    );
+    const ownerIds = businesses.map((business) => business.ownerUserId).filter(Boolean);
+
+    if (!ownerIds.length) {
+      return;
+    }
+
+    await this.notificationsService.sendToUsers(ownerIds, {
+      title: "Multipedido cancelado",
+      body: `${context.rejectedBusinessName ?? "Un negocio"} rechazo el pedido. No prepares este multipedido.`,
+      data: {
+        type: "ORDER_GROUP_CANCELLED",
+        orderGroupId: orders[0].orderGroupId,
+        reason: "BUSINESS_REJECTED",
+        rejectedBusinessId: context.rejectedBusinessId,
+        rejectedBusinessName: context.rejectedBusinessName
+      }
+    });
+  }
+
+  private async notifyBusinessesCashPayoutPending(orders: Order[]): Promise<void> {
+    for (const order of orders) {
+      if (
+        order.paymentMethod !== "CASH" ||
+        order.businessCashPayoutStatus !== "PENDING" ||
+        Number(order.businessPayoutCents ?? 0) <= 0
+      ) {
+        continue;
+      }
+
+      const business = await this.businessesService.findById(order.businessId);
+
+      if (!business.ownerUserId) {
+        continue;
+      }
+
+      await this.notificationsService.sendToUser(business.ownerUserId, {
+        title: "Confirma pago recibido",
+        body: `Confirma cuando recibas ${this.formatMoney(order.businessPayoutCents)} ${order.fulfillmentMethod === "PICKUP" ? "del cliente" : "del repartidor"}.`,
+        data: {
+          type: "BUSINESS_CASH_PAYOUT_PENDING",
+          orderGroupId: order.orderGroupId,
+          businessOrderId: order.id,
+          businessId: order.businessId,
+          businessPayoutCents: order.businessPayoutCents
+        }
+      });
+    }
   }
 
   private async notifyCustomerOrderStatus(
@@ -1177,11 +1768,48 @@ export class OrdersService {
       return;
     }
 
+    const message = this.customerBusinessStatusMessage(orders, status);
+
     await this.notificationsService.sendToUser(firstOrder.userId, {
-      title: this.notificationTitleForBusinessStatus(status),
-      body: this.notificationBodyForBusinessStatus(status),
+      title: message.title,
+      body: message.body,
       data: { type: "ORDER_STATUS", orderGroupId, status }
     });
+  }
+
+  private customerBusinessStatusMessage(
+    orders: Order[],
+    status: BusinessOrderStatus
+  ): { title: string; body: string } {
+    const [firstOrder] = orders;
+
+    if (firstOrder?.fulfillmentMethod === "PICKUP" && status === "READY") {
+      const readyCount = orders.filter((order) => ["READY", "DELIVERED"].includes(order.status as string)).length;
+
+      if (readyCount < orders.length) {
+        return {
+          title: "Parte de tu pedido esta lista",
+          body: "Una parte de tu multipedido ya esta lista para recoger; espera la confirmacion de las demas partes."
+        };
+      }
+
+      return {
+        title: "Tu pedido esta listo para recoger",
+        body: "Puedes pasar al negocio a recoger tu pedido."
+      };
+    }
+
+    if (firstOrder?.fulfillmentMethod === "PICKUP" && status === "DELIVERED") {
+      return {
+        title: "Pedido recogido",
+        body: "El negocio marco tu pedido como entregado."
+      };
+    }
+
+    return {
+      title: this.notificationTitleForBusinessStatus(status),
+      body: this.notificationBodyForBusinessStatus(status)
+    };
   }
 
   private async notifyCustomerIfCourierArrived(orders: Order[]): Promise<void> {
@@ -1222,9 +1850,13 @@ export class OrdersService {
     }
 
     await this.orderRepository.save(orders);
+    await this.sendCourierArrivedNotification(firstOrder);
+  }
+
+  private async sendCourierArrivedNotification(firstOrder: Order): Promise<void> {
     await this.notificationsService.sendToUser(firstOrder.userId, {
       title: "Tu pedido esta en la puerta",
-      body: "El repartidor ya esta muy cerca de tu ubicacion.",
+      body: "El repartidor ya llego a tu ubicacion. Puedes salir a recibir tu pedido.",
       data: { type: "COURIER_ARRIVED", orderGroupId: firstOrder.orderGroupId }
     });
   }
@@ -1295,15 +1927,35 @@ export class OrdersService {
       id: order.id,
       orderGroupId: order.orderGroupId,
       businessId: order.businessId,
-      businessLatitude: order.businessLatitude,
-      businessLongitude: order.businessLongitude,
+      businessLatitude: this.nullableNumber(order.businessLatitude),
+      businessLongitude: this.nullableNumber(order.businessLongitude),
       businessAddress: order.businessAddress,
+      paymentMethod: order.paymentMethod,
+      fulfillmentMethod: order.fulfillmentMethod,
       paymentStatus: order.paymentStatus,
+      createdAt: order.createdAt,
+      cashReceivedCents: order.cashReceivedCents,
+      cashChangeCents: order.cashChangeCents,
+      cashCollectedAt: order.cashCollectedAt,
       paidAt: order.paidAt,
       status: order.status as BusinessOrderStatus,
       items,
-      subtotalCents: order.subtotalCents || items.reduce((sum, item) => sum + item.lineTotalCents, 0)
+      subtotalCents: order.subtotalCents || items.reduce((sum, item) => sum + item.lineTotalCents, 0),
+      businessCommissionCents: order.businessCommissionCents ?? 0,
+      businessPayoutCents: order.businessPayoutCents ?? order.subtotalCents,
+      businessCashPayoutStatus: order.businessCashPayoutStatus ?? "NOT_APPLICABLE",
+      businessCashPayoutConfirmedAt: order.businessCashPayoutConfirmedAt,
+      businessCashPayoutConfirmedByUserId: order.businessCashPayoutConfirmedByUserId
     };
+  }
+
+  private nullableNumber(value: number | string | null | undefined): number | null {
+    if (value === null || value === undefined) {
+      return null;
+    }
+
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
   }
 
   private groupOrders(orders: Order[]): Order[][] {
@@ -1330,6 +1982,86 @@ export class OrdersService {
     }
   }
 
+  private async ensureCourierProfile(courierId: string): Promise<CourierProfile> {
+    const existingProfile = await this.courierProfileRepository.findOne({
+      where: { userId: courierId }
+    });
+
+    if (existingProfile) {
+      return existingProfile;
+    }
+
+    const profile = this.courierProfileRepository.create({
+      userId: courierId,
+      availabilityStatus: "OFFLINE",
+      stripeChargesEnabled: false,
+      stripePayoutsEnabled: false,
+      stripeDetailsSubmitted: false,
+      stripeRequirementsCurrentlyDue: null
+    });
+
+    return this.courierProfileRepository.save(profile);
+  }
+
+  private async refreshCourierStripeConnectStatusForProfile(profile: CourierProfile): Promise<CourierProfile> {
+    if (!profile.stripeConnectedAccountId) {
+      return this.resetCourierStripeConnectState(profile);
+    }
+
+    const platformAccountId = await this.stripeConnectService.currentPlatformAccountId();
+
+    if (!profile.stripePlatformAccountId || profile.stripePlatformAccountId !== platformAccountId) {
+      return this.resetCourierStripeConnectState(profile);
+    }
+
+    try {
+      const account = await this.stripeConnectService.retrieveAccountStatus(profile.stripeConnectedAccountId);
+      profile.stripePlatformAccountId = platformAccountId;
+      profile.stripeChargesEnabled = account.chargesEnabled;
+      profile.stripePayoutsEnabled = account.payoutsEnabled;
+      profile.stripeDetailsSubmitted = account.detailsSubmitted;
+      profile.stripeRequirementsCurrentlyDue = account.requirementsCurrentlyDue;
+      return this.courierProfileRepository.save(profile);
+    } catch (error) {
+      if (this.stripeConnectService.isMissingResourceError(error)) {
+        return this.resetCourierStripeConnectState(profile);
+      }
+
+      throw error;
+    }
+  }
+
+  private resetCourierStripeConnectState(profile: CourierProfile): Promise<CourierProfile> {
+    profile.stripeConnectedAccountId = null;
+    profile.stripePlatformAccountId = null;
+    profile.stripeChargesEnabled = false;
+    profile.stripePayoutsEnabled = false;
+    profile.stripeDetailsSubmitted = false;
+    profile.stripeRequirementsCurrentlyDue = null;
+    return this.courierProfileRepository.save(profile);
+  }
+
+  private async enqueueRecoverableCourierPayouts(courierId: string): Promise<void> {
+    const orders = await this.orderRepository.find({
+      where: { courierId }
+    });
+    const orderGroupIds = [...new Set(
+      orders
+        .filter((order) =>
+          order.status === "DELIVERED" &&
+          order.paymentMethod === "CARD" &&
+          order.paymentStatus === "PAID" &&
+          ["PENDING", "FAILED"].includes(order.courierPayoutStatus) &&
+          Number(order.courierPayoutCents ?? 0) > 0
+        )
+        .map((order) => order.orderGroupId)
+    )];
+
+    for (const orderGroupId of orderGroupIds) {
+      await this.paymentProcessingQueue.addCourierPayout(orderGroupId);
+    }
+  }
+
   private async ensureDeliveryOffersForGroup(orderGroupId: string): Promise<void> {
     const orders = await this.orderRepository.find({
       where: { orderGroupId },
@@ -1340,11 +2072,7 @@ export class OrdersService {
       return;
     }
 
-    const groupStatus = this.deriveOrderGroupStatus(
-      orders.map((order) => order.status as BusinessOrderStatus)
-    );
-
-    if (groupStatus !== "READY_FOR_PICKUP" || orders.some((order) => order.courierId)) {
+    if (!this.hasCollectableOrders(orders) || orders.some((order) => order.courierId)) {
       return;
     }
 
@@ -1361,7 +2089,12 @@ export class OrdersService {
       where: { orderGroupId }
     });
     const alreadyOfferedCourierIds = new Set(existingOffers.map((offer) => offer.courierId));
-    const eligibleCourierIds = courierIds.filter((courierId) => !alreadyOfferedCourierIds.has(courierId));
+    const blockedCourierIds = await this.blockedCourierIdsForNewOrders();
+    const eligibleCourierIds = courierIds.filter(
+      (courierId) =>
+        !alreadyOfferedCourierIds.has(courierId) &&
+        !blockedCourierIds.has(courierId)
+    );
 
     if (!eligibleCourierIds.length) {
       return;
@@ -1443,6 +2176,10 @@ export class OrdersService {
   }
 
   private async ensureDeliveryOffersForAvailableCourier(courierId: string): Promise<void> {
+    if (await this.isCourierBlockedFromNewOrders(courierId)) {
+      return;
+    }
+
     const profile = await this.courierProfileRepository.findOne({
       where: { userId: courierId }
     });
@@ -1474,16 +2211,93 @@ export class OrdersService {
         continue;
       }
 
-      const groupStatus = this.deriveOrderGroupStatus(
-        orders.map((order) => order.status as BusinessOrderStatus)
-      );
-
-      if (groupStatus === "READY_FOR_PICKUP") {
+      if (this.hasCollectableOrders(orders)) {
         readyOrderGroupIds.push(orderGroupId);
       }
     }
 
     return readyOrderGroupIds;
+  }
+
+  private async assertCourierCanReceiveNewOrders(courierId: string): Promise<void> {
+    if (await this.isCourierBlockedFromNewOrders(courierId)) {
+      throw new ConflictException(
+        "Tienes dinero pendiente por liquidar. Entregalo para recibir nuevos pedidos."
+      );
+    }
+  }
+
+  private async isCourierBlockedFromNewOrders(courierId: string): Promise<boolean> {
+    const settlement = await this.cashSettlementRepository.findOne({
+      where: {
+        courierId,
+        status: "PENDING",
+        netDueToRapivCents: MoreThan(0),
+        periodEndAt: LessThanOrEqual(this.cashSettlementBlockThreshold())
+      }
+    });
+
+    if (settlement) {
+      return true;
+    }
+
+    const pendingBusinessPayout = await this.orderRepository.findOne({
+      where: {
+        courierId,
+        paymentMethod: "CASH",
+        paymentStatus: "PAID",
+        status: "DELIVERED",
+        businessCashPayoutStatus: "PENDING",
+        businessPayoutCents: MoreThan(0),
+        cashCollectedAt: LessThanOrEqual(this.businessCashPayoutBlockThreshold())
+      }
+    });
+
+    return Boolean(pendingBusinessPayout);
+  }
+
+  private async blockedCourierIdsForNewOrders(): Promise<Set<string>> {
+    const settlements = await this.cashSettlementRepository.find({
+      where: {
+        status: "PENDING",
+        netDueToRapivCents: MoreThan(0),
+        periodEndAt: LessThanOrEqual(this.cashSettlementBlockThreshold())
+      }
+    });
+
+    const blockedCourierIds = new Set(settlements.map((settlement) => settlement.courierId));
+    const pendingBusinessPayouts = await this.orderRepository.find({
+      where: {
+        paymentMethod: "CASH",
+        paymentStatus: "PAID",
+        status: "DELIVERED",
+        businessCashPayoutStatus: "PENDING",
+        businessPayoutCents: MoreThan(0),
+        cashCollectedAt: LessThanOrEqual(this.businessCashPayoutBlockThreshold())
+      }
+    });
+
+    for (const order of pendingBusinessPayouts) {
+      if (order.courierId) {
+        blockedCourierIds.add(order.courierId);
+      }
+    }
+
+    return blockedCourierIds;
+  }
+
+  private cashSettlementBlockThreshold(): Date {
+    const graceMs = this.nonNegativeIntegerEnv("CASH_SETTLEMENT_GRACE_MINUTES", 30) * 60_000;
+    return new Date(Date.now() - graceMs);
+  }
+
+  private businessCashPayoutBlockThreshold(): Date {
+    const timeoutMs = this.nonNegativeIntegerEnv("BUSINESS_CASH_PAYOUT_TIMEOUT_MINUTES", 120) * 60_000;
+    return new Date(Date.now() - timeoutMs);
+  }
+
+  private formatMoney(cents: number): string {
+    return `$${(Number(cents ?? 0) / 100).toFixed(2)}`;
   }
 
   private scoreCourierForOrder(profile: CourierProfile, order: Order): number {
@@ -1594,28 +2408,55 @@ export class OrdersService {
   }
 
   private assertValidCourierTransition(
-    currentStatus: OrderGroupStatus,
+    currentStatuses: BusinessOrderStatus[],
     nextStatus: "PICKED_UP" | "ON_THE_WAY" | "DELIVERED"
   ): void {
-    const allowedTransitions: Record<string, Array<"PICKED_UP" | "ON_THE_WAY" | "DELIVERED">> = {
-      ASSIGNED: ["PICKED_UP"],
-      PICKED_UP: ["ON_THE_WAY"],
-      ON_THE_WAY: ["DELIVERED"]
-    };
+    const currentStatus = this.deriveOrderGroupStatus(currentStatuses);
+    const hasAssignedOrReadyOrder = currentStatuses.some((status) =>
+      ["ASSIGNED", "READY"].includes(status)
+    );
+    const allPickedUp = currentStatuses.every((status) => status === "PICKED_UP");
+    const allOnTheWay = currentStatuses.every((status) => status === "ON_THE_WAY");
 
-    if (!allowedTransitions[currentStatus]?.includes(nextStatus)) {
-      throw new ConflictException(`Invalid transition from ${currentStatus} to ${nextStatus}`);
+    if (nextStatus === "PICKED_UP" && hasAssignedOrReadyOrder) {
+      return;
     }
+
+    if (nextStatus === "ON_THE_WAY" && allPickedUp) {
+      return;
+    }
+
+    if (nextStatus === "DELIVERED" && allOnTheWay) {
+      return;
+    }
+
+    if (nextStatus === "ON_THE_WAY" && currentStatus === "PARTIALLY_PICKED_UP") {
+      throw new ConflictException("All business orders must be picked up before starting delivery");
+    }
+
+    if (nextStatus === "DELIVERED" && currentStatus === "PICKED_UP") {
+      throw new ConflictException("Order must be on the way before delivery");
+    }
+
+    throw new ConflictException(`Invalid transition from ${currentStatus} to ${nextStatus}`);
   }
 
   private isDeliveryLocationVisible(statuses: BusinessOrderStatus[]): boolean {
     const status = this.deriveOrderGroupStatus(statuses);
-    return ["ASSIGNED", "PICKED_UP", "ON_THE_WAY"].includes(status);
+    return ["ASSIGNED", "PARTIALLY_PICKED_UP", "PICKED_UP", "ON_THE_WAY"].includes(status);
   }
 
   private deriveOrderGroupStatus(statuses: BusinessOrderStatus[]): OrderGroupStatus {
+    if (statuses.every((status) => status === "CANCELLED")) {
+      return "CANCELLED";
+    }
+
     if (statuses.every((status) => status === "REJECTED")) {
       return "REJECTED";
+    }
+
+    if (statuses.every((status) => status === "REJECTED" || status === "CANCELLED")) {
+      return "CANCELLED";
     }
 
     if (statuses.every((status) => status === "DELIVERED")) {
@@ -1630,12 +2471,24 @@ export class OrdersService {
       return "PICKED_UP";
     }
 
+    if (statuses.some((status) => status === "PICKED_UP")) {
+      return "PARTIALLY_PICKED_UP";
+    }
+
     if (statuses.every((status) => status === "ASSIGNED")) {
+      return "ASSIGNED";
+    }
+
+    if (statuses.some((status) => status === "ASSIGNED")) {
       return "ASSIGNED";
     }
 
     if (statuses.every((status) => status === "READY")) {
       return "READY_FOR_PICKUP";
+    }
+
+    if (statuses.some((status) => status === "READY")) {
+      return "PARTIALLY_READY";
     }
 
     if (statuses.some((status) => status === "PREPARING")) {
@@ -1651,6 +2504,137 @@ export class OrdersService {
     }
 
     return "PENDING_BUSINESS";
+  }
+
+  private hasCollectableOrders(orders: Order[]): boolean {
+    return orders[0]?.fulfillmentMethod !== "PICKUP" && orders.some((order) => order.status === "READY");
+  }
+
+  private canBusinessProcessOrder(order: Order): boolean {
+    return order.paymentStatus === "PAID" || order.paymentMethod === "CASH";
+  }
+
+  private providerTransfersFromMetadata(
+    metadata: Record<string, unknown> | null | undefined
+  ): ProviderTransfer[] {
+    const transfers = metadata?.stripeTransfers;
+
+    if (!Array.isArray(transfers)) {
+      return [];
+    }
+
+    return transfers.map((transfer) => {
+      const value = transfer as Record<string, unknown>;
+
+      return {
+        businessId: String(value.businessId),
+        connectedAccountId: String(value.connectedAccountId),
+        providerTransferId: String(value.providerTransferId),
+        amountCents: Number(value.amountCents)
+      };
+    }).filter((transfer) =>
+      transfer.businessId &&
+      transfer.connectedAccountId &&
+      transfer.providerTransferId &&
+      Number.isInteger(transfer.amountCents) &&
+      transfer.amountCents > 0
+    );
+  }
+
+  private assertBusinessCheckoutRules(
+    business: Business,
+    paymentMethod: "CARD" | "CASH"
+  ): void {
+    if (paymentMethod === "CASH" && business.acceptsCash === false) {
+      throw new ConflictException(`${business.name} does not accept cash payments`);
+    }
+
+    if (paymentMethod === "CARD" && business.acceptsCard === false) {
+      throw new ConflictException(`${business.name} does not accept card payments`);
+    }
+  }
+
+  private assertCashCollectionForDelivery(orders: Order[], cashReceivedCents?: number): void {
+    const [firstOrder] = orders;
+
+    if (firstOrder?.paymentMethod !== "CASH") {
+      return;
+    }
+
+    const totalCents = this.totalCentsForOrders(orders);
+
+    if (cashReceivedCents === undefined) {
+      throw new BadRequestException("Cash received amount is required");
+    }
+
+    if (cashReceivedCents < totalCents) {
+      throw new ConflictException("Cash received is less than order total");
+    }
+  }
+
+  private totalCentsForOrders(orders: Order[]): number {
+    return orders.reduce(
+      (sum, order) => sum + Number(order.subtotalCents ?? 0) + Number(order.deliveryFeeCents ?? 0),
+      0
+    );
+  }
+
+  private deliveryFeeCents(): number {
+    return this.nonNegativeIntegerEnv("DELIVERY_FEE_CENTS", 0);
+  }
+
+  private courierPayoutCents(): number {
+    const payoutCents = this.nonNegativeIntegerEnv("COURIER_PAYOUT_CENTS", 0);
+    const deliveryFeeCents = this.deliveryFeeCents();
+
+    if (payoutCents > deliveryFeeCents) {
+      throw new Error("COURIER_PAYOUT_CENTS cannot be greater than DELIVERY_FEE_CENTS");
+    }
+
+    return payoutCents;
+  }
+
+  private platformFeeBasisPoints(paymentMethod: "CARD" | "CASH"): number {
+    const key = paymentMethod === "CASH" ? "RAPIV_CASH_PLATFORM_FEE_BPS" : "RAPIV_PLATFORM_FEE_BPS";
+    const fallback = paymentMethod === "CASH"
+      ? this.nonNegativeIntegerEnv("RAPIV_PLATFORM_FEE_BPS", 0)
+      : 0;
+    const configured = this.nonNegativeIntegerEnv(key, fallback);
+
+    if (configured >= 10_000) {
+      throw new Error(`${key} must be an integer between 0 and 9999`);
+    }
+
+    return configured;
+  }
+
+  private assertCardPaymentMinimum(paymentMethod: "CARD" | "CASH", subtotalCents: number): void {
+    if (paymentMethod !== "CARD") {
+      return;
+    }
+
+    const minimumCents = this.cardPaymentMinimumCents();
+
+    if (subtotalCents < minimumCents) {
+      throw new ConflictException(
+        `Los pedidos con tarjeta requieren minimo ${this.formatMoney(minimumCents)} en productos. Usa efectivo para pedidos menores.`
+      );
+    }
+  }
+
+  private cardPaymentMinimumCents(): number {
+    return this.nonNegativeIntegerEnv("CARD_PAYMENT_MINIMUM_CENTS", 18_000);
+  }
+
+  private nonNegativeIntegerEnv(key: string, fallback: number): number {
+    const rawValue = process.env[key];
+    const value = rawValue === undefined ? fallback : Number(rawValue);
+
+    if (!Number.isInteger(value) || value < 0) {
+      throw new Error(`${key} must be a non-negative integer`);
+    }
+
+    return value;
   }
 
   private isUniqueViolation(error: unknown): boolean {

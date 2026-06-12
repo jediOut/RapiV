@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
-import { StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { useState } from "react";
 
 import { colors } from "../theme/colors";
 
@@ -24,6 +25,9 @@ export function AuthTextField({
   secureTextEntry = false,
   error
 }: AuthTextFieldProps) {
+  const [isSecureTextVisible, setIsSecureTextVisible] = useState(false);
+  const shouldHideText = secureTextEntry && !isSecureTextVisible;
+
   return (
     <View style={styles.fieldGroup}>
       {label ? <Text style={styles.label}>{label}</Text> : null}
@@ -35,10 +39,24 @@ export function AuthTextField({
           onChangeText={onChangeText}
           placeholder={placeholder}
           placeholderTextColor={colors.muted}
-          secureTextEntry={secureTextEntry}
+          secureTextEntry={shouldHideText}
           style={styles.input}
           value={value}
         />
+        {secureTextEntry ? (
+          <Pressable
+            accessibilityLabel={isSecureTextVisible ? "Ocultar contrasena" : "Mostrar contrasena"}
+            accessibilityRole="button"
+            onPress={() => setIsSecureTextVisible((current) => !current)}
+            style={styles.visibilityButton}
+          >
+            <Ionicons
+              name={isSecureTextVisible ? "eye-off-outline" : "eye-outline"}
+              size={20}
+              color={colors.muted}
+            />
+          </Pressable>
+        ) : null}
       </View>
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
     </View>
@@ -70,6 +88,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "600",
     minHeight: 50
+  },
+  visibilityButton: {
+    alignItems: "center",
+    height: 40,
+    justifyContent: "center",
+    width: 40
   },
   errorText: {
     color: "#B91C1C",

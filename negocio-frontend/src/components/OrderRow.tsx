@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View, TouchableOpacity } from "react-native";
+import { Alert, StyleSheet, Text, View, TouchableOpacity } from "react-native";
 
 import { colors } from "../theme/colors";
 import type { BusinessOrder } from "../types/business";
@@ -6,7 +6,8 @@ import type { BusinessOrder } from "../types/business";
 type OrderRowProps = {
   order: BusinessOrder;
   compact?: boolean;
-  onUpdateStatus?: (order: BusinessOrder, nextStatus: 'ACCEPTED' | 'PREPARING' | 'READY' | 'REJECTED') => void;
+  onConfirmCashPayout?: (order: BusinessOrder) => void;
+  onUpdateStatus?: (order: BusinessOrder, nextStatus: 'ACCEPTED' | 'PREPARING' | 'READY' | 'REJECTED' | 'DELIVERED') => void;
 };
 
 const getStatusStyle = (status: BusinessOrder['status']) => {
@@ -23,6 +24,8 @@ const getStatusStyle = (status: BusinessOrder['status']) => {
     case 'ON_THE_WAY':
       return styles.statusReady;
     case 'REJECTED':
+    case 'CANCELLED':
+      return styles.statusCancelled;
     case 'DELIVERED':
       return styles.statusCompleted;
     default:
@@ -57,50 +60,212 @@ const getStatusLabel = (status: BusinessOrder['status']) => {
   }
 };
 
-const getPaymentLabel = (paymentStatus?: string) => {
+const getPaymentLabel = (paymentMethod?: string, paymentStatus?: string) => {
+  if (paymentMethod === 'CASH') {
+    return 'Efectivo';
+  }
+
   if (paymentStatus === 'PAID') {
-    return 'Pagado';
+    return 'Tarjeta pagada';
   }
 
   if (paymentStatus === 'REFUNDED') {
-    return 'Reembolsado';
+    return 'Tarjeta reembolsada';
   }
 
-  return 'Pendiente de pago';
+  return 'Tarjeta pendiente de pago';
+};
+
+const getFulfillmentLabel = (fulfillmentMethod?: BusinessOrder['fulfillmentMethod']) =>
+  fulfillmentMethod === 'PICKUP' ? 'Recoge cliente' : 'Con envio';
+
+const getCashPayoutLabel = (
+  status: BusinessOrder['businessCashPayoutStatus'] | undefined,
+  fulfillmentMethod?: BusinessOrder['fulfillmentMethod']
+) => {
+  const payer = fulfillmentMethod === 'PICKUP' ? 'cliente' : 'repartidor';
+
+  switch (status) {
+    case 'PENDING':
+      return `Pago del ${payer} pendiente`;
+    case 'CONFIRMED':
+      return `Pago del ${payer} confirmado`;
+    case 'CANCELLED':
+      return `Pago del ${payer} cancelado`;
+    default:
+      return null;
+  }
+};
+
+const formatOrderDate = (value?: string | Date) => {
+  if (!value) {
+    return 'Fecha no disponible';
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return 'Fecha no disponible';
+  }
+
+  return date.toLocaleString('es-MX', {
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    month: 'short',
+    year: 'numeric'
+  });
+};
+
+const getOrderNote = (order: BusinessOrder) => {
+  if (order.status === 'DELIVERED') {
+    return 'Pedido entregado al cliente.';
+  }
+
+  if (order.status === 'REJECTED') {
+    return order.paymentStatus === 'REFUNDED'
+      ? 'Rechazaste este pedido. El pago fue reembolsado.'
+      : 'Rechazaste este pedido.';
+  }
+
+  if (order.status === 'CANCELLED') {
+    return order.paymentStatus === 'REFUNDED'
+      ? 'Multipedido cancelado. El cliente recibio reembolso.'
+      : 'Pedido cancelado antes de completarse.';
+  }
+
+  if (order.paymentStatus === 'REFUNDED') {
+    return 'Pago reembolsado.';
+  }
+
+  return null;
 };
 
 const getActionLabel = (status: BusinessOrder['status']) => {
   switch (status) {
     case 'PENDING':
-      return 'Aceptar y preparar';
+      return 'Preparar';
     case 'ACCEPTED':
       return 'Preparar';
     case 'PREPARING':
       return 'Listo';
+    case 'READY':
+      return 'Entregado';
     default:
       return '';
   }
 };
 
-export function OrderRow({ order, compact = false, onUpdateStatus }: OrderRowProps) {
+export function OrderRow({ order, compact = false, onConfirmCashPayout, onUpdateStatus }: OrderRowProps) {
   const statusStyle = getStatusStyle(order.status);
-  const actionLabel = getActionLabel(order.status);
+  const actionLabel = order.status === 'READY' && order.fulfillmentMethod !== 'PICKUP'
+    ? ''
+    : getActionLabel(order.status);
   const total = (order.subtotalCents / 100).toFixed(2);
+  const commission = ((order.businessCommissionCents ?? 0) / 100).toFixed(2);
+  const payout = ((order.businessPayoutCents ?? order.subtotalCents) / 100).toFixed(2);
+  const canProcessOrder = order.paymentMethod === 'CASH' || order.paymentStatus === 'PAID';
+  const canConfirmCashPayout =
+    order.paymentMethod === 'CASH' &&
+    (order.status === 'DELIVERED' || (order.fulfillmentMethod === 'PICKUP' && order.status === 'READY')) &&
+    order.businessCashPayoutStatus === 'PENDING' &&
+    Boolean(onConfirmCashPayout);
+  const cashPayoutLabel = getCashPayoutLabel(order.businessCashPayoutStatus, order.fulfillmentMethod);
+  const orderNote = getOrderNote(order);
+  const requestCashPayoutConfirmation = () => {
+    if (!onConfirmCashPayout) {
+      return;
+    }
+
+    Alert.alert(
+      'Confirmar dinero recibido',
+      `Confirma que ${order.fulfillmentMethod === 'PICKUP' ? 'el cliente' : 'el repartidor'} ya te entrego $${payout} de este pedido.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Confirmar',
+          onPress: () => onConfirmCashPayout(order)
+        }
+      ]
+    );
+  };
+  const requestStatusChange = (nextStatus: 'ACCEPTED' | 'PREPARING' | 'READY' | 'REJECTED' | 'DELIVERED') => {
+    if (!onUpdateStatus) {
+      return;
+    }
+
+    if (nextStatus === 'ACCEPTED' || nextStatus === 'REJECTED') {
+      const isRejecting = nextStatus === 'REJECTED';
+      Alert.alert(
+        isRejecting ? 'Rechazar pedido' : 'Aceptar pedido',
+        isRejecting
+          ? 'Confirma que quieres rechazar este pedido. El cliente vera que el negocio no pudo aceptarlo.'
+          : 'Confirma que quieres aceptar este pedido y comenzar a prepararlo.',
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          {
+            text: isRejecting ? 'Rechazar' : 'Aceptar',
+            style: isRejecting ? 'destructive' : 'default',
+            onPress: () => onUpdateStatus(order, nextStatus)
+          }
+        ]
+      );
+      return;
+    }
+
+    onUpdateStatus(order, nextStatus);
+  };
+  const orderNumber = `RAP-${order.id.slice(0, 8).toUpperCase()}`;
 
   return (
     <View style={styles.orderRow}>
       <View style={styles.orderTopLine}>
-        <View>
-          <Text style={styles.itemTitle}>{order.id.slice(0, 8)}</Text>
+        <View style={styles.orderTitleBlock}>
+          <Text style={styles.itemTitle}>Numero de pedido {orderNumber}</Text>
+          <Text style={styles.dateText}>{formatOrderDate(order.createdAt)}</Text>
           <Text style={styles.mutedText}>Items: {order.items.length}</Text>
         </View>
         <View style={[styles.orderStatus, statusStyle]}>
-          <Text style={styles.orderStatusText}>{getStatusLabel(order.status)}</Text>
+          <Text numberOfLines={1} adjustsFontSizeToFit style={styles.orderStatusText}>
+            {getStatusLabel(order.status)}
+          </Text>
         </View>
       </View>
       <Text style={styles.paymentStatus}>
-        {getPaymentLabel(order.paymentStatus)}
+        {getPaymentLabel(order.paymentMethod, order.paymentStatus)} - {getFulfillmentLabel(order.fulfillmentMethod)}
       </Text>
+      <View style={styles.financialPanel}>
+        <View style={styles.financialMetric}>
+          <Text style={styles.financialLabel}>Venta</Text>
+          <Text style={styles.financialValue}>${total}</Text>
+        </View>
+        <View style={styles.financialMetric}>
+          <Text style={styles.financialLabel}>Comision RapiV</Text>
+          <Text style={styles.financialValueMuted}>-${commission}</Text>
+        </View>
+        <View style={styles.financialMetric}>
+          <Text style={styles.financialLabel}>Recibiras</Text>
+          <Text style={styles.financialValuePrimary}>${payout}</Text>
+        </View>
+      </View>
+      <Text style={styles.financialNote}>
+        El envio y el pago al repartidor se liquidan aparte de la venta del negocio.
+      </Text>
+      {cashPayoutLabel ? (
+        <View style={[
+          styles.cashPayoutBadge,
+          order.businessCashPayoutStatus === 'CONFIRMED' && styles.cashPayoutConfirmed,
+          order.businessCashPayoutStatus === 'PENDING' && styles.cashPayoutPending
+        ]}>
+          <Text style={styles.cashPayoutText}>{cashPayoutLabel}</Text>
+        </View>
+      ) : null}
+      {!canProcessOrder && order.status === 'PENDING' ? (
+        <Text style={styles.paymentHint}>Aparece en la lista, pero no se puede preparar hasta que Stripe confirme el pago.</Text>
+      ) : null}
+      {orderNote ? (
+        <Text style={styles.orderNote}>{orderNote}</Text>
+      ) : null}
       {!compact && (
         <Text style={styles.orderItems} numberOfLines={2}>
           {order.items.map((item) => `${item.quantity}× ${item.productName}`).join(', ')}
@@ -112,19 +277,39 @@ export function OrderRow({ order, compact = false, onUpdateStatus }: OrderRowPro
           <View style={styles.actions}>
             {order.status === 'PENDING' ? (
               <TouchableOpacity
-                onPress={() => onUpdateStatus(order, 'REJECTED')}
+                onPress={() => requestStatusChange('REJECTED')}
                 style={[styles.actionButton, styles.rejectButton]}
               >
                 <Text style={styles.rejectText}>Rechazar</Text>
               </TouchableOpacity>
             ) : null}
-            <TouchableOpacity
-              onPress={() => onUpdateStatus(order, order.status === 'PENDING' ? 'ACCEPTED' : order.status === 'ACCEPTED' ? 'PREPARING' : 'READY')}
-              style={styles.actionButton}
-            >
-              <Text style={styles.actionText}>{actionLabel}</Text>
-            </TouchableOpacity>
+            {canConfirmCashPayout && order.fulfillmentMethod === 'PICKUP' ? (
+              <TouchableOpacity
+                onPress={requestCashPayoutConfirmation}
+                style={styles.actionButton}
+              >
+                <Text style={styles.actionText}>Confirmar pago</Text>
+              </TouchableOpacity>
+            ) : canProcessOrder ? (
+              <TouchableOpacity
+                onPress={() => requestStatusChange(order.status === 'PENDING' ? 'ACCEPTED' : order.status === 'ACCEPTED' ? 'PREPARING' : order.status === 'READY' ? 'DELIVERED' : 'READY')}
+                style={styles.actionButton}
+              >
+                <Text style={styles.actionText}>{actionLabel}</Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={[styles.actionButton, styles.disabledAction]}>
+                <Text style={styles.disabledActionText}>Esperando pago</Text>
+              </View>
+            )}
           </View>
+        ) : canConfirmCashPayout ? (
+          <TouchableOpacity
+            onPress={requestCashPayoutConfirmation}
+            style={styles.actionButton}
+          >
+            <Text style={styles.actionText}>Confirmar recibido</Text>
+          </TouchableOpacity>
         ) : null}
       </View>
     </View>
@@ -145,19 +330,38 @@ const styles = StyleSheet.create({
     gap: 12,
     justifyContent: "space-between"
   },
+  orderTitleBlock: {
+    flex: 1,
+    minWidth: 0
+  },
   itemTitle: {
     color: colors.text,
+    flexShrink: 1,
     fontSize: 15,
     fontWeight: "800",
-    letterSpacing: 0
+    letterSpacing: 0,
+    lineHeight: 20
   },
   mutedText: {
     color: colors.muted,
     fontSize: 13,
     lineHeight: 18
   },
+  dateText: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 17,
+    marginTop: 2
+  },
   orderStatus: {
+    alignItems: "center",
     borderRadius: 999,
+    flexShrink: 0,
+    justifyContent: "center",
+    maxWidth: 96,
+    minHeight: 28,
+    minWidth: 76,
     paddingHorizontal: 10,
     paddingVertical: 6
   },
@@ -173,7 +377,8 @@ const styles = StyleSheet.create({
   orderStatusText: {
     color: colors.text,
     fontSize: 12,
-    fontWeight: "800"
+    fontWeight: "800",
+    textAlign: "center"
   },
   orderItems: {
     color: "#334155",
@@ -186,6 +391,82 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "800",
     marginTop: 8
+  },
+  paymentHint: {
+    color: colors.muted,
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 4
+  },
+  financialPanel: {
+    backgroundColor: "#F8FAFC",
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 8,
+    padding: 10
+  },
+  financialMetric: {
+    flex: 1,
+    minWidth: 0
+  },
+  financialLabel: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: "800",
+    lineHeight: 15
+  },
+  financialValue: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "900",
+    marginTop: 2
+  },
+  financialValueMuted: {
+    color: "#B45309",
+    fontSize: 14,
+    fontWeight: "900",
+    marginTop: 2
+  },
+  financialValuePrimary: {
+    color: colors.primary,
+    fontSize: 14,
+    fontWeight: "900",
+    marginTop: 2
+  },
+  financialNote: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 17,
+    marginTop: 6
+  },
+  cashPayoutBadge: {
+    alignSelf: "flex-start",
+    borderRadius: 8,
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7
+  },
+  cashPayoutConfirmed: {
+    backgroundColor: "#DCFCE7"
+  },
+  cashPayoutPending: {
+    backgroundColor: "#FEF3C7"
+  },
+  cashPayoutText: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: "800"
+  },
+  orderNote: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 17,
+    marginTop: 6
   },
   orderFooter: {
     alignItems: "center",
@@ -200,6 +481,9 @@ const styles = StyleSheet.create({
   },
   statusCompleted: {
     backgroundColor: colors.disabled
+  },
+  statusCancelled: {
+    backgroundColor: "#FEE2E2"
   },
   actionButton: {
     backgroundColor: colors.primary,
@@ -223,6 +507,14 @@ const styles = StyleSheet.create({
   },
   rejectText: {
     color: "#B91C1C",
+    fontSize: 13,
+    fontWeight: "800"
+  },
+  disabledAction: {
+    backgroundColor: colors.disabled
+  },
+  disabledActionText: {
+    color: colors.muted,
     fontSize: 13,
     fontWeight: "800"
   }

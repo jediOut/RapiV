@@ -3,20 +3,20 @@ import { useEffect, useState } from "react";
 import { SafeAreaView, StyleSheet } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
-import { loginBusinessUser, registerBusinessUser, validateSession } from "./src/services/authApi";
+import {
+  loginBusinessUserWithGoogle,
+  validateSession
+} from "./src/services/authApi";
 import { isApiError } from "./src/services/apiError";
 import { registerPushNotifications } from "./src/services/notificationRegistration";
 import { clearSession, loadSession, saveSession } from "./src/services/sessionStorage";
 import { BusinessApp } from "./src/screens/BusinessApp";
 import { StateView } from "./src/components/StateView";
 import { LoginScreen } from "./src/screens/LoginScreen";
-import { RegisterScreen } from "./src/screens/RegisterScreen";
 import { colors } from "./src/theme/colors";
-import type { AuthSession, LoginPayload, RegisterBusinessPayload } from "./src/types/auth";
-import type { AuthScreen } from "./src/types/navigation";
+import type { AuthSession } from "./src/types/auth";
 
 export default function App() {
-  const [authScreen, setAuthScreen] = useState<AuthScreen>("login");
   const [session, setSession] = useState<AuthSession | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
@@ -59,31 +59,16 @@ export default function App() {
     void registerPushNotifications("negocio");
   }, [session?.accessToken]);
 
-  async function handleLogin(payload: LoginPayload) {
+  async function handleGoogleLogin(idToken: string) {
     setIsAuthenticating(true);
     setAuthError(null);
 
     try {
-      const nextSession = await loginBusinessUser(payload);
+      const nextSession = await loginBusinessUserWithGoogle(idToken);
       await saveSession(nextSession);
       setSession(nextSession);
     } catch (error) {
-      setAuthError(error instanceof Error ? error.message : "No se pudo iniciar sesion");
-    } finally {
-      setIsAuthenticating(false);
-    }
-  }
-
-  async function handleRegister(payload: RegisterBusinessPayload) {
-    setIsAuthenticating(true);
-    setAuthError(null);
-
-    try {
-      const nextSession = await registerBusinessUser(payload);
-      await saveSession(nextSession);
-      setSession(nextSession);
-    } catch (error) {
-      setAuthError(error instanceof Error ? error.message : "No se pudo crear la cuenta");
+      setAuthError(error instanceof Error ? error.message : "No se pudo iniciar sesion con Google");
     } finally {
       setIsAuthenticating(false);
     }
@@ -108,24 +93,22 @@ export default function App() {
     <SafeAreaProvider>
       <SafeAreaView style={styles.safeArea}>
         <StatusBar style="dark" />
-        {session ? (
+        {session && !(session.user.roles ?? []).includes("BUSINESS_OWNER") ? (
+          <StateView
+            actionLabel="Cerrar sesion"
+            message="Este correo pertenece a otra app de RapiV. Usa una cuenta de negocio para entrar aqui."
+            onAction={handleLogout}
+            title="Cuenta no valida"
+            type="error"
+          />
+        ) : session ? (
           <BusinessApp session={session} onLogout={handleLogout} />
-        ) : authScreen === "login" ? (
+        ) : (
           <LoginScreen
             error={authError}
             isLoading={isAuthenticating}
-            onLogin={handleLogin}
-            onCreateAccount={() => setAuthScreen("register")}
-          />
-        ) : (
-          <RegisterScreen
-            error={authError}
-            isLoading={isAuthenticating}
-            onRegister={handleRegister}
-            onBackToLogin={() => {
-              setAuthError(null);
-              setAuthScreen("login");
-            }}
+            onGoogleLogin={handleGoogleLogin}
+            onGoogleError={setAuthError}
           />
         )}
       </SafeAreaView>

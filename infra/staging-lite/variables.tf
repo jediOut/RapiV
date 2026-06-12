@@ -48,27 +48,3 @@ variable "media_bucket_name" {
   type        = string
   default     = ""
 }
-
-variable "deploy_artifacts_bucket_name" {
-  description = "Private S3 bucket for GitHub Actions staging deployment artifacts. Leave empty to generate a unique account-scoped name."
-  type        = string
-  default     = ""
-}
-
-variable "github_owner" {
-  description = "GitHub owner allowed to assume the staging deploy role."
-  type        = string
-  default     = "jediOut"
-}
-
-variable "github_repo" {
-  description = "GitHub repository allowed to assume the staging deploy role."
-  type        = string
-  default     = "RapiV"
-}
-
-variable "github_branch" {
-  description = "GitHub branch allowed to assume the staging deploy role."
-  type        = string
-  default     = "main"
-}

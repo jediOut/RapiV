@@ -22,8 +22,10 @@ export class ProductsService {
       businessId,
       name: dto.name.trim(),
       category: dto.category.trim(),
+      description: dto.description?.trim(),
       image: dto.image?.trim(),
       priceCents: dto.priceCents,
+      minimumQuantityPerOrder: dto.minimumQuantityPerOrder ?? 1,
       available: true,
       stock: 0
     });
@@ -100,8 +102,16 @@ export class ProductsService {
       product.category = dto.category.trim();
     }
 
+    if (dto.description !== undefined) {
+      product.description = dto.description.trim();
+    }
+
     if (dto.priceCents !== undefined) {
       product.priceCents = dto.priceCents;
+    }
+
+    if (dto.minimumQuantityPerOrder !== undefined) {
+      product.minimumQuantityPerOrder = dto.minimumQuantityPerOrder;
     }
 
     if (dto.image !== undefined) {

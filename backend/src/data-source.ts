@@ -1,4 +1,5 @@
 import { config as loadEnv } from 'dotenv';
+import { join } from 'node:path';
 import { DataSource } from 'typeorm';
 import { User } from './modules/users/user.entity';
 import { Business } from './modules/businesses/business.entity';
@@ -10,6 +11,9 @@ import { CourierProfile } from './modules/users/courier-profile.entity';
 import { PushToken } from './modules/notifications/push-token.entity';
 import { PaymentEvent } from './modules/payments/payment-event.entity';
 import { Payment } from './modules/payments/payment.entity';
+import { Rating } from './modules/ratings/rating.entity';
+import { CashSettlement } from './modules/payments/cash-settlement.entity';
+import { BusinessCommissionSettlement } from './modules/payments/business-commission-settlement.entity';
 
 loadEnv({ path: '../.env', quiet: true });
 loadEnv({ path: '.env', override: true, quiet: true });
@@ -33,7 +37,21 @@ export const AppDataSource = new DataSource({
   database: process.env.DB_NAME ?? requiredEnv('POSTGRES_DB'),
   synchronize: false,
   logging: false,
-  entities: [User, CourierProfile, PushToken, Business, Product, Order, OrderItem, DeliveryOffer, Payment, PaymentEvent],
-  migrations: ['src/database/migrations/*.ts'],
+  entities: [
+    User,
+    CourierProfile,
+    PushToken,
+    Business,
+    Product,
+    Order,
+    OrderItem,
+    DeliveryOffer,
+    Payment,
+    PaymentEvent,
+    CashSettlement,
+    BusinessCommissionSettlement,
+    Rating
+  ],
+  migrations: [join(__dirname, 'database/migrations/*{.ts,.js}')],
   subscribers: [],
 });

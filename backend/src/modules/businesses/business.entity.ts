@@ -56,6 +56,9 @@ export class Business {
   @Column({ type: 'varchar', nullable: true })
   stripeConnectedAccountId?: string | null;
 
+  @Column({ type: 'varchar', nullable: true })
+  stripePlatformAccountId?: string | null;
+
   @Column({ type: 'boolean', default: false })
   stripeChargesEnabled!: boolean;
 
@@ -67,9 +70,6 @@ export class Business {
 
   @Column({ type: 'jsonb', nullable: true })
   stripeRequirementsCurrentlyDue?: string[] | null;
-
-  @Column({ type: 'int', default: 1 })
-  minimumOrderItems!: number;
 
   @Column({ type: 'boolean', default: true })
   isOpen!: boolean;

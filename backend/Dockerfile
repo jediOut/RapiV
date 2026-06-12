@@ -29,6 +29,7 @@ WORKDIR /app/backend
 COPY --from=build /app/backend/package*.json ./
 COPY --from=build /app/backend/node_modules ./node_modules
 COPY --from=build /app/backend/dist ./dist
+COPY --from=build /app/shared/contracts /app/shared/contracts
 
 USER node
 

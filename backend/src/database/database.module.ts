@@ -11,6 +11,9 @@ import { OrderItem } from '../modules/orders/order-item.entity';
 import { DeliveryOffer } from '../modules/orders/delivery-offer.entity';
 import { PaymentEvent } from '../modules/payments/payment-event.entity';
 import { Payment } from '../modules/payments/payment.entity';
+import { Rating } from '../modules/ratings/rating.entity';
+import { CashSettlement } from '../modules/payments/cash-settlement.entity';
+import { BusinessCommissionSettlement } from '../modules/payments/business-commission-settlement.entity';
 
 function requiredConfig(configService: ConfigService, key: string): string {
   const value = configService.get<string>(key);
@@ -38,7 +41,21 @@ function configValue(configService: ConfigService, key: string, fallbackKey: str
         username: configValue(configService, 'DB_USERNAME', 'POSTGRES_USER'),
         password: configValue(configService, 'DB_PASSWORD', 'POSTGRES_PASSWORD'),
         database: configValue(configService, 'DB_NAME', 'POSTGRES_DB'),
-        entities: [User, CourierProfile, PushToken, Business, Product, Order, OrderItem, DeliveryOffer, Payment, PaymentEvent],
+        entities: [
+          User,
+          CourierProfile,
+          PushToken,
+          Business,
+          Product,
+          Order,
+          OrderItem,
+          DeliveryOffer,
+          Payment,
+          PaymentEvent,
+          CashSettlement,
+          BusinessCommissionSettlement,
+          Rating
+        ],
         synchronize: configService.get<string>('DB_SYNCHRONIZE', 'false') === 'true',
         logging: configService.get<string>('DB_LOGGING', 'false') === 'true',
         migrations: ['dist/database/migrations/*.js'],

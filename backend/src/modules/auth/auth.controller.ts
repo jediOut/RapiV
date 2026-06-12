@@ -4,6 +4,7 @@ import { CurrentUser } from "../../common/auth/current-user.decorator";
 import type { AuthenticatedUser } from "../../common/auth/jwt-auth.guard";
 import { Public } from "../../common/auth/public.decorator";
 import { LoginDto } from "./dto/login.dto";
+import { GoogleAuthDto } from "./dto/google-auth.dto";
 import { RegisterDto } from "./dto/register.dto";
 import { UpdateProfileDto } from "./dto/update-profile.dto";
 import { AuthService } from "./auth.service";
@@ -22,6 +23,12 @@ export class AuthController {
   @Post("login")
   async login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
+  }
+
+  @Public()
+  @Post("google")
+  async google(@Body() dto: GoogleAuthDto) {
+    return this.authService.loginWithGoogle(dto);
   }
 
   @Get("me")

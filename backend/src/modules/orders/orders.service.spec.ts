@@ -14,9 +14,11 @@ import { Product } from "../products/product.entity";
 import { DeliveryOffer } from "./delivery-offer.entity";
 import { OrderItem } from "./order-item.entity";
 import { Order } from "./order.entity";
+import { CashSettlement } from "../payments/cash-settlement.entity";
 import type { BusinessOrderStatus } from "./order.entity";
 import { OrdersService } from "./orders.service";
 import { User } from "../users/user.entity";
+import { Payment } from "../payments/payment.entity";
 
 type RepositoryMock<T> = {
   findOne: (options: { where: Partial<T> }) => Promise<T | null>;
@@ -64,9 +66,11 @@ function createOrder(overrides: Partial<Order> = {}): Order {
 
 function createService(options: {
   orders?: Order[];
+  cashSettlements?: CashSettlement[];
   products?: Product[];
   businesses?: Business[];
   offers?: DeliveryOffer[];
+  payments?: Payment[];
   courierProfiles?: CourierProfile[];
   users?: User[];
   businessOwnerId?: string;
@@ -75,16 +79,36 @@ function createService(options: {
   const products = options.products ?? [];
   const businesses = options.businesses ?? [];
   const offers = options.offers ?? [];
+  const payments = options.payments ?? [];
   const courierProfiles = options.courierProfiles ?? [];
+  const cashSettlements = options.cashSettlements ?? [];
   const users = options.users ?? [];
   const enqueuedOfferGenerations: string[] = [];
+  const enqueuedCourierDeliveryTimeouts: Array<{ orderGroupId: string; delayMs?: number }> = [];
   let orderSequence = 1;
   let transactionCount = 0;
 
+  const matchesWhere = <T>(entity: T, where: Partial<T>) =>
+    Object.entries(where).every(([key, value]) => {
+      const actual = (entity as unknown as Record<string, unknown>)[key];
+
+      if (value && typeof value === "object" && "_type" in value) {
+        const operator = value as unknown as { _type: string; _value: unknown };
+
+        if (operator._type === "moreThan") {
+          return Number(actual) > Number(operator._value);
+        }
+
+        if (operator._type === "lessThanOrEqual") {
+          return new Date(actual as Date).getTime() <= new Date(operator._value as Date).getTime();
+        }
+      }
+
+      return actual === value;
+    });
+
   const findOrder = (where: Partial<Order>) =>
-    orders.find((order) =>
-      Object.entries(where).every(([key, value]) => (order as unknown as Record<string, unknown>)[key] === value)
-    ) ?? null;
+    orders.find((order) => matchesWhere(order, where)) ?? null;
 
   const orderRepository: RepositoryMock<Order> = {
     async findOne(options: { where: Partial<Order> }) {
@@ -96,9 +120,7 @@ function createService(options: {
       }
 
       return orders.filter((order) =>
-        Object.entries(options.where ?? {}).every(
-          ([key, value]) => (order as unknown as Record<string, unknown>)[key] === value
-        )
+        matchesWhere(order, options.where ?? {})
       );
     },
     async save(entity: Order | Order[]) {
@@ -178,6 +200,14 @@ function createService(options: {
         return businesses.find((business) => business.id === options.where.id) ?? null;
       }
 
+      if (entity === Payment) {
+        return payments.find((payment) =>
+          Object.entries(options.where).every(
+            ([key, value]) => (payment as unknown as Record<string, unknown>)[key] === value
+          )
+        ) ?? null;
+      }
+
       return null;
     },
     async find(entity: unknown, options: { where?: Partial<Order> | Partial<OrderItem> }) {
@@ -194,6 +224,14 @@ function createService(options: {
         return offers.filter((offer) =>
           Object.entries(options.where ?? {}).every(
             ([key, value]) => (offer as unknown as Record<string, unknown>)[key] === value
+          )
+        );
+      }
+
+      if (entity === Payment) {
+        return payments.filter((payment) =>
+          Object.entries(options.where ?? {}).every(
+            ([key, value]) => (payment as unknown as Record<string, unknown>)[key] === value
           )
         );
       }
@@ -231,6 +269,14 @@ function createService(options: {
         }
       }
 
+      if (entity === Payment) {
+        for (const payment of values as unknown as Payment[]) {
+          if (!payments.some((existing) => existing.id === payment.id)) {
+            payments.push(payment);
+          }
+        }
+      }
+
       return value;
     },
     getRepository(entity: unknown) {
@@ -251,6 +297,7 @@ function createService(options: {
       const business = businesses.find((current) => current.id === id);
       return {
         id,
+        name: business?.name ?? "Taqueria",
         ownerUserId: options.businessOwnerId ?? business?.ownerUserId ?? ownerUserId
       };
     }
@@ -320,6 +367,12 @@ function createService(options: {
     },
     async addDeliveryOfferTimeout() {
       return undefined;
+    },
+    async addCourierDeliveryTimeout(orderGroupId: string, delayMs?: number) {
+      enqueuedCourierDeliveryTimeouts.push(
+        delayMs === undefined ? { orderGroupId } : { orderGroupId, delayMs }
+      );
+      return undefined;
     }
   };
 
@@ -333,8 +386,82 @@ function createService(options: {
       sentNotifications.push({ userId, message });
       return undefined;
     },
-    async sendToUsers() {
+    async sendToUsers(userIds: string[], message: { title: string; body: string; data?: Record<string, unknown> }) {
+      for (const userId of userIds) {
+        sentNotifications.push({ userId, message });
+      }
       return undefined;
+    }
+  };
+  const paymentRepository = {
+    async findOne(options: { where: Partial<Payment> }) {
+      return payments.find((payment) =>
+        Object.entries(options.where).every(
+          ([key, value]) => (payment as unknown as Record<string, unknown>)[key] === value
+        )
+      ) ?? null;
+    }
+  };
+  const cashSettlementRepository = {
+    async findOne(options: { where: Partial<CashSettlement> }) {
+      return cashSettlements.find((settlement) =>
+        matchesWhere(settlement, options.where)
+      ) ?? null;
+    },
+    async find(options: { where: Partial<CashSettlement> }) {
+      return cashSettlements.filter((settlement) => matchesWhere(settlement, options.where));
+    }
+  };
+  const refundCalls: Array<{
+    providerPaymentId: string;
+    idempotencyKey: string;
+    transfers: unknown[];
+  }> = [];
+  const stripeAccountCalls: unknown[] = [];
+  const paymentProviderService = {
+    async refundPayment(providerPaymentId: string, idempotencyKey: string, transfers: unknown[] = []) {
+      refundCalls.push({ providerPaymentId, idempotencyKey, transfers });
+      return {
+        providerRefundId: "refund-1",
+        status: "succeeded",
+        raw: { refund: { id: "refund-1" }, transferReversals: [] }
+      };
+    }
+  };
+  const stripeConnectService = {
+    async createExpressAccount(input: unknown) {
+      stripeAccountCalls.push(input);
+      return {
+        accountId: "acct_courier_1",
+        platformAccountId: "acct_platform_1"
+      };
+    },
+    async createOnboardingLink() {
+      return "https://connect.stripe.test/onboarding";
+    },
+    async retrieveAccountStatus() {
+      return {
+        platformAccountId: "acct_platform_1",
+        chargesEnabled: false,
+        payoutsEnabled: true,
+        detailsSubmitted: true,
+        requirementsCurrentlyDue: null
+      };
+    },
+    async currentPlatformAccountId() {
+      return "acct_platform_1";
+    },
+    requireReturnBaseUrl() {
+      return "https://api.example.com/api";
+    },
+    isMissingResourceError() {
+      return false;
+    }
+  };
+  const paymentProcessingQueue = {
+    courierPayoutOrderGroupIds: [] as string[],
+    async addCourierPayout(orderGroupId: string) {
+      this.courierPayoutOrderGroupIds.push(orderGroupId);
     }
   };
 
@@ -344,20 +471,29 @@ function createService(options: {
     {} as never,
     userRepository as never,
     courierProfileRepository as never,
-    {} as never,
+    paymentRepository as never,
+    cashSettlementRepository as never,
     dataSource as never,
     businessesService as never,
     orderProcessingQueue as never,
     notificationsService as never,
-    {} as never
+    paymentProviderService as never,
+    paymentProcessingQueue as never,
+    stripeConnectService as never
   );
 
   return {
     service,
     orders,
     offers,
+    payments,
+    courierProfiles,
     enqueuedOfferGenerations,
+    enqueuedCourierDeliveryTimeouts,
     sentNotifications,
+    refundCalls,
+    queuedCourierPayoutOrderGroupIds: paymentProcessingQueue.courierPayoutOrderGroupIds,
+    stripeAccountCalls,
     getTransactionCount: () => transactionCount
   };
 }
@@ -404,6 +540,24 @@ describe("OrdersService", () => {
     );
   });
 
+  it("rejects orders below the product minimum quantity", async () => {
+    product.minimumQuantityPerOrder = 5;
+    const { service } = createService({
+      products: [product],
+      businesses: [openBusiness]
+    });
+
+    await assert.rejects(
+      service.create(customerId, "product-minimum-key", {
+        deliveryAddress: "Calle Principal 123",
+        items: [{ productId: product.id, quantity: 2 }],
+        latitude: 20.0289,
+        longitude: -96.6472
+      }),
+      ConflictException
+    );
+  });
+
   it("coalesces concurrent creates with the same idempotency key", async () => {
     const { service, getTransactionCount } = createService({
       products: [product],
@@ -412,6 +566,7 @@ describe("OrdersService", () => {
 
     const dto = {
       deliveryAddress: " Calle Principal 123 ",
+      paymentMethod: "CASH" as const,
       items: [{ productId: product.id, quantity: 2 }],
       latitude: 20.0289,
       longitude: -96.6472
@@ -427,6 +582,262 @@ describe("OrdersService", () => {
     assert.equal(first.customerId, customerId);
     assert.equal(first.businessOrders[0].subtotalCents, 2400);
     assert.equal(first.businessOrders[0].items[0].lineTotalCents, 2400);
+  });
+
+  it("adds delivery fee and records pending courier payout when creating an order", async () => {
+    const originalDeliveryFee = process.env.DELIVERY_FEE_CENTS;
+    const originalCourierPayout = process.env.COURIER_PAYOUT_CENTS;
+    const originalPlatformFee = process.env.RAPIV_PLATFORM_FEE_BPS;
+    const originalCardPaymentMinimum = process.env.CARD_PAYMENT_MINIMUM_CENTS;
+    process.env.DELIVERY_FEE_CENTS = "3000";
+    process.env.COURIER_PAYOUT_CENTS = "2000";
+    process.env.RAPIV_PLATFORM_FEE_BPS = "1000";
+    process.env.CARD_PAYMENT_MINIMUM_CENTS = "0";
+
+    try {
+      const { service } = createService({
+        products: [product],
+        businesses: [openBusiness]
+      });
+
+      const order = await service.create(customerId, "financial-key-1", {
+        deliveryAddress: "Calle Principal 123",
+        items: [{ productId: product.id, quantity: 2 }],
+        latitude: 20.0289,
+        longitude: -96.6472
+      });
+
+      assert.equal(order.subtotalCents, 2400);
+      assert.equal(order.deliveryFeeCents, 3000);
+      assert.equal(order.courierPayoutCents, 2000);
+      assert.equal(order.courierPayoutStatus, "PENDING");
+      assert.equal(order.platformDeliveryMarginCents, 1000);
+      assert.equal(order.totalCents, 5400);
+      assert.equal(order.businessOrders[0].businessCommissionCents, 240);
+      assert.equal(order.businessOrders[0].businessPayoutCents, 2160);
+    } finally {
+      if (originalDeliveryFee === undefined) {
+        delete process.env.DELIVERY_FEE_CENTS;
+      } else {
+        process.env.DELIVERY_FEE_CENTS = originalDeliveryFee;
+      }
+
+      if (originalCourierPayout === undefined) {
+        delete process.env.COURIER_PAYOUT_CENTS;
+      } else {
+        process.env.COURIER_PAYOUT_CENTS = originalCourierPayout;
+      }
+
+      if (originalPlatformFee === undefined) {
+        delete process.env.RAPIV_PLATFORM_FEE_BPS;
+      } else {
+        process.env.RAPIV_PLATFORM_FEE_BPS = originalPlatformFee;
+      }
+
+      if (originalCardPaymentMinimum === undefined) {
+        delete process.env.CARD_PAYMENT_MINIMUM_CENTS;
+      } else {
+        process.env.CARD_PAYMENT_MINIMUM_CENTS = originalCardPaymentMinimum;
+      }
+    }
+  });
+
+  it("keeps delivery financials single and business commissions per business in multipedido", async () => {
+    const originalDeliveryFee = process.env.DELIVERY_FEE_CENTS;
+    const originalCourierPayout = process.env.COURIER_PAYOUT_CENTS;
+    const originalPlatformFee = process.env.RAPIV_PLATFORM_FEE_BPS;
+    const originalCardPaymentMinimum = process.env.CARD_PAYMENT_MINIMUM_CENTS;
+    process.env.DELIVERY_FEE_CENTS = "3000";
+    process.env.COURIER_PAYOUT_CENTS = "2000";
+    process.env.RAPIV_PLATFORM_FEE_BPS = "1000";
+    process.env.CARD_PAYMENT_MINIMUM_CENTS = "0";
+
+    try {
+      const secondBusiness = {
+        ...openBusiness,
+        id: "business-2",
+        ownerUserId: "owner-2",
+        name: "Pizzeria"
+      } as Business;
+      const secondProduct = {
+        ...product,
+        id: "product-2",
+        businessId: secondBusiness.id,
+        business: secondBusiness,
+        name: "Pizza",
+        priceCents: 3000
+      } as Product;
+      const { service } = createService({
+        products: [product, secondProduct],
+        businesses: [openBusiness, secondBusiness]
+      });
+
+      const order = await service.create(customerId, "multipedido-financial-key-1", {
+        deliveryAddress: "Calle Principal 123",
+        items: [
+          { productId: product.id, quantity: 2 },
+          { productId: secondProduct.id, quantity: 1 }
+        ],
+        latitude: 20.0289,
+        longitude: -96.6472
+      });
+
+      const [firstBusinessOrder, secondBusinessOrder] = order.businessOrders;
+
+      assert.equal(order.subtotalCents, 5400);
+      assert.equal(order.deliveryFeeCents, 3000);
+      assert.equal(order.courierPayoutCents, 2000);
+      assert.equal(order.platformDeliveryMarginCents, 1000);
+      assert.equal(order.totalCents, 8400);
+      assert.equal(firstBusinessOrder.businessCommissionCents, 240);
+      assert.equal(firstBusinessOrder.businessPayoutCents, 2160);
+      assert.equal(secondBusinessOrder.businessCommissionCents, 300);
+      assert.equal(secondBusinessOrder.businessPayoutCents, 2700);
+      assert.equal(
+        order.businessOrders.reduce((sum, businessOrder) => sum + (businessOrder.businessCommissionCents ?? 0), 0),
+        540
+      );
+    } finally {
+      if (originalDeliveryFee === undefined) {
+        delete process.env.DELIVERY_FEE_CENTS;
+      } else {
+        process.env.DELIVERY_FEE_CENTS = originalDeliveryFee;
+      }
+
+      if (originalCourierPayout === undefined) {
+        delete process.env.COURIER_PAYOUT_CENTS;
+      } else {
+        process.env.COURIER_PAYOUT_CENTS = originalCourierPayout;
+      }
+
+      if (originalPlatformFee === undefined) {
+        delete process.env.RAPIV_PLATFORM_FEE_BPS;
+      } else {
+        process.env.RAPIV_PLATFORM_FEE_BPS = originalPlatformFee;
+      }
+
+      if (originalCardPaymentMinimum === undefined) {
+        delete process.env.CARD_PAYMENT_MINIMUM_CENTS;
+      } else {
+        process.env.CARD_PAYMENT_MINIMUM_CENTS = originalCardPaymentMinimum;
+      }
+    }
+  });
+
+  it("creates pickup orders without delivery financials or courier payout", async () => {
+    const originalDeliveryFee = process.env.DELIVERY_FEE_CENTS;
+    const originalCourierPayout = process.env.COURIER_PAYOUT_CENTS;
+    const originalCardPaymentMinimum = process.env.CARD_PAYMENT_MINIMUM_CENTS;
+    process.env.DELIVERY_FEE_CENTS = "3000";
+    process.env.COURIER_PAYOUT_CENTS = "2000";
+    process.env.CARD_PAYMENT_MINIMUM_CENTS = "0";
+
+    try {
+      const { service } = createService({
+        products: [product],
+        businesses: [openBusiness]
+      });
+
+      const order = await service.create(customerId, "pickup-key-1", {
+        deliveryAddress: "Recoger en negocio",
+        fulfillmentMethod: "PICKUP",
+        paymentMethod: "CARD",
+        items: [{ productId: product.id, quantity: 2 }]
+      });
+
+      assert.equal(order.fulfillmentMethod, "PICKUP");
+      assert.equal(order.subtotalCents, 2400);
+      assert.equal(order.deliveryFeeCents, 0);
+      assert.equal(order.courierPayoutCents, 0);
+      assert.equal(order.platformDeliveryMarginCents, 0);
+      assert.equal(order.totalCents, 2400);
+    } finally {
+      if (originalDeliveryFee === undefined) {
+        delete process.env.DELIVERY_FEE_CENTS;
+      } else {
+        process.env.DELIVERY_FEE_CENTS = originalDeliveryFee;
+      }
+
+      if (originalCourierPayout === undefined) {
+        delete process.env.COURIER_PAYOUT_CENTS;
+      } else {
+        process.env.COURIER_PAYOUT_CENTS = originalCourierPayout;
+      }
+
+      if (originalCardPaymentMinimum === undefined) {
+        delete process.env.CARD_PAYMENT_MINIMUM_CENTS;
+      } else {
+        process.env.CARD_PAYMENT_MINIMUM_CENTS = originalCardPaymentMinimum;
+      }
+    }
+  });
+
+  it("requires cash for orders below the card payment minimum", async () => {
+    const originalCardPaymentMinimum = process.env.CARD_PAYMENT_MINIMUM_CENTS;
+    process.env.CARD_PAYMENT_MINIMUM_CENTS = "18000";
+
+    try {
+      const { service } = createService({
+        products: [product],
+        businesses: [openBusiness]
+      });
+
+      await assert.rejects(
+        service.create(customerId, "card-minimum-key-1", {
+          deliveryAddress: "Calle Principal 123",
+          paymentMethod: "CARD",
+          items: [{ productId: product.id, quantity: 2 }],
+          latitude: 20.0289,
+          longitude: -96.6472
+        }),
+        ConflictException
+      );
+    } finally {
+      if (originalCardPaymentMinimum === undefined) {
+        delete process.env.CARD_PAYMENT_MINIMUM_CENTS;
+      } else {
+        process.env.CARD_PAYMENT_MINIMUM_CENTS = originalCardPaymentMinimum;
+      }
+    }
+  });
+
+  it("uses the lower cash platform fee when creating cash orders", async () => {
+    const originalPlatformFee = process.env.RAPIV_PLATFORM_FEE_BPS;
+    const originalCashPlatformFee = process.env.RAPIV_CASH_PLATFORM_FEE_BPS;
+    process.env.RAPIV_PLATFORM_FEE_BPS = "1000";
+    process.env.RAPIV_CASH_PLATFORM_FEE_BPS = "500";
+
+    try {
+      const { service } = createService({
+        products: [product],
+        businesses: [openBusiness]
+      });
+
+      const order = await service.create(customerId, "cash-fee-key-1", {
+        deliveryAddress: "Calle Principal 123",
+        paymentMethod: "CASH",
+        items: [{ productId: product.id, quantity: 2 }],
+        latitude: 20.0289,
+        longitude: -96.6472
+      });
+
+      assert.equal(order.paymentMethod, "CASH");
+      assert.equal(order.businessOrders[0].subtotalCents, 2400);
+      assert.equal(order.businessOrders[0].businessCommissionCents, 120);
+      assert.equal(order.businessOrders[0].businessPayoutCents, 2280);
+    } finally {
+      if (originalPlatformFee === undefined) {
+        delete process.env.RAPIV_PLATFORM_FEE_BPS;
+      } else {
+        process.env.RAPIV_PLATFORM_FEE_BPS = originalPlatformFee;
+      }
+
+      if (originalCashPlatformFee === undefined) {
+        delete process.env.RAPIV_CASH_PLATFORM_FEE_BPS;
+      } else {
+        process.env.RAPIV_CASH_PLATFORM_FEE_BPS = originalCashPlatformFee;
+      }
+    }
   });
 
   it("enforces business order status transitions", async () => {
@@ -479,6 +890,105 @@ describe("OrdersService", () => {
     await assert.doesNotReject(
       service.updateBusinessOrderStatus(ownerUserId, businessId, unpaidOrder.id, "REJECTED")
     );
+  });
+
+  it("cancels and refunds a multipedido when one business rejects it", async () => {
+    const rejectingOrder = createOrder({
+      id: "order-1",
+      businessId,
+      status: "PENDING",
+      paymentStatus: "PAID"
+    });
+    const otherOrder = createOrder({
+      id: "order-2",
+      businessId: "business-2",
+      status: "PREPARING",
+      paymentStatus: "PAID"
+    });
+    const payment = {
+      id: "payment-1",
+      userId: customerId,
+      orderGroupId,
+      amountCents: 2400,
+      currency: "MXN",
+      status: "SUCCEEDED",
+      provider: "stripe",
+      providerPaymentId: "cs_test_1",
+      idempotencyKey: "pay-key",
+      paidAt: new Date("2026-01-01T00:00:00.000Z"),
+      providerMetadata: {
+        stripeTransfers: [
+          {
+            businessId,
+            connectedAccountId: "acct_1",
+            providerTransferId: "tr_1",
+            amountCents: 1200
+          },
+          {
+            businessId: "business-2",
+            connectedAccountId: "acct_2",
+            providerTransferId: "tr_2",
+            amountCents: 1200
+          }
+        ]
+      },
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-01T00:00:00.000Z")
+    } as Payment;
+    const { service, sentNotifications, refundCalls } = createService({
+      orders: [rejectingOrder, otherOrder],
+      payments: [payment],
+      businesses: [
+        openBusiness,
+        {
+          ...openBusiness,
+          id: "business-2",
+          ownerUserId: "owner-2",
+          name: "Pizzeria"
+        }
+      ]
+    });
+
+    const rejected = await service.updateBusinessOrderStatus(
+      ownerUserId,
+      businessId,
+      rejectingOrder.id,
+      "REJECTED"
+    );
+
+    assert.equal(rejected.status, "REJECTED");
+    assert.equal(rejectingOrder.status, "REJECTED");
+    assert.equal(rejectingOrder.paymentStatus, "REFUNDED");
+    assert.equal(otherOrder.status, "CANCELLED");
+    assert.equal(otherOrder.paymentStatus, "REFUNDED");
+    assert.equal(payment.status, "CANCELLED");
+    assert.equal(refundCalls.length, 1);
+    assert.equal(refundCalls[0].providerPaymentId, "cs_test_1");
+    assert.equal(refundCalls[0].transfers.length, 2);
+    assert.ok(sentNotifications.some((notification) =>
+      notification.userId === customerId &&
+      notification.message.data?.type === "ORDER_REFUNDED" &&
+      notification.message.body.includes("Taqueria")
+    ));
+    assert.ok(sentNotifications.some((notification) =>
+      notification.userId === "owner-2" &&
+      notification.message.data?.type === "ORDER_GROUP_CANCELLED" &&
+      notification.message.body.includes("Taqueria")
+    ));
+  });
+
+  it("derives cancelled order groups from cancelled business orders", async () => {
+    const firstOrder = createOrder({ id: "order-1", status: "CANCELLED" });
+    const secondOrder = createOrder({
+      id: "order-2",
+      businessId: "business-2",
+      status: "CANCELLED"
+    });
+    const { service } = createService({ orders: [firstOrder, secondOrder] });
+
+    const orderGroup = await service.findById(orderGroupId);
+
+    assert.equal(orderGroup.status, "CANCELLED");
   });
 
   it("assigns ready order groups to a courier", async () => {
@@ -538,7 +1048,7 @@ describe("OrdersService", () => {
       createdAt: new Date(),
       updatedAt: new Date()
     } as CourierProfile;
-    const { service, sentNotifications } = createService({
+    const { service, sentNotifications, enqueuedCourierDeliveryTimeouts } = createService({
       orders: [order],
       offers: [acceptedOffer, competingOffer],
       courierProfiles: [profile]
@@ -552,10 +1062,124 @@ describe("OrdersService", () => {
     assert.equal(acceptedOffer.status, "ACCEPTED");
     assert.equal(competingOffer.status, "CANCELLED");
     assert.equal(profile.availabilityStatus, "BUSY");
+    assert.deepEqual(enqueuedCourierDeliveryTimeouts, [{ orderGroupId }]);
     assert.deepEqual(sentNotifications[0]?.message.data, {
       type: "ORDER_ASSIGNED",
       orderGroupId
     });
+  });
+
+  it("cancels an active delivery when the courier delivery timeout expires", async () => {
+    const order = createOrder({
+      status: "ASSIGNED",
+      courierId,
+      courierPayoutStatus: "PENDING"
+    });
+    const payment = {
+      id: "payment-1",
+      orderGroupId,
+      status: "SUCCEEDED",
+      providerPaymentId: "pi_test_1",
+      providerMetadata: {},
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-01-01T00:00:00.000Z")
+    } as Payment;
+    const profile = {
+      userId: courierId,
+      availabilityStatus: "BUSY",
+      createdAt: new Date(),
+      updatedAt: new Date()
+    } as CourierProfile;
+    const { service, refundCalls, sentNotifications } = createService({
+      orders: [order],
+      payments: [payment],
+      courierProfiles: [profile]
+    });
+
+    await service.handleLifecycleJob({ type: "COURIER_DELIVERY_TIMEOUT", orderGroupId });
+
+    assert.equal(order.status, "CANCELLED");
+    assert.equal(order.paymentStatus, "REFUNDED");
+    assert.equal(order.courierPayoutStatus, "CANCELLED");
+    assert.equal(payment.status, "CANCELLED");
+    assert.equal(profile.availabilityStatus, "AVAILABLE");
+    assert.deepEqual(refundCalls[0], {
+      providerPaymentId: "pi_test_1",
+      idempotencyKey: `refund:${orderGroupId}:COURIER_DELIVERY_TIMEOUT`,
+      transfers: []
+    });
+    assert.deepEqual(sentNotifications[0]?.message.data, {
+      type: "ORDER_REFUNDED",
+      orderGroupId,
+      reason: "COURIER_DELIVERY_TIMEOUT",
+      rejectedBusinessId: undefined,
+      rejectedBusinessName: undefined
+    });
+  });
+
+  it("assigns a multipedido as soon as one business order is ready", async () => {
+    const readyOrder = createOrder({ id: "order-1", status: "READY" });
+    const preparingOrder = createOrder({
+      id: "order-2",
+      businessId: "business-2",
+      status: "PREPARING"
+    });
+    const { service } = createService({ orders: [readyOrder, preparingOrder] });
+
+    const assigned = await service.assignToCourier(courierId, orderGroupId);
+
+    assert.equal(assigned.status, "ASSIGNED");
+    assert.equal(readyOrder.status, "ASSIGNED");
+    assert.equal(preparingOrder.status, "PREPARING");
+    assert.equal(readyOrder.courierId, courierId);
+    assert.equal(preparingOrder.courierId, courierId);
+  });
+
+  it("lets couriers pick up ready business orders one at a time", async () => {
+    const firstOrder = createOrder({ id: "order-1", status: "ASSIGNED", courierId });
+    const secondOrder = createOrder({
+      id: "order-2",
+      businessId: "business-2",
+      status: "PREPARING",
+      courierId
+    });
+    const { service } = createService({ orders: [firstOrder, secondOrder] });
+
+    const partiallyPickedUp = await service.markBusinessOrderPickedUp(
+      courierId,
+      orderGroupId,
+      firstOrder.id
+    );
+
+    assert.equal(partiallyPickedUp.status, "PARTIALLY_PICKED_UP");
+    assert.equal(firstOrder.status, "PICKED_UP");
+    assert.equal(secondOrder.status, "PREPARING");
+
+    secondOrder.status = "READY";
+    const fullyPickedUp = await service.markBusinessOrderPickedUp(
+      courierId,
+      orderGroupId,
+      secondOrder.id
+    );
+
+    assert.equal(fullyPickedUp.status, "PICKED_UP");
+    assert.equal(secondOrder.status, "PICKED_UP");
+  });
+
+  it("blocks delivery start until every business order has been picked up", async () => {
+    const firstOrder = createOrder({ id: "order-1", status: "PICKED_UP", courierId });
+    const secondOrder = createOrder({
+      id: "order-2",
+      businessId: "business-2",
+      status: "PREPARING",
+      courierId
+    });
+    const { service } = createService({ orders: [firstOrder, secondOrder] });
+
+    await assert.rejects(
+      service.updateCourierDeliveryStatus(courierId, orderGroupId, "ON_THE_WAY"),
+      ConflictException
+    );
   });
 
   it("requeues ready orders when a courier becomes available", async () => {
@@ -576,6 +1200,95 @@ describe("OrdersService", () => {
     });
 
     assert.deepEqual(enqueuedOfferGenerations, [orderGroupId]);
+  });
+
+  it("blocks new orders when the courier has an overdue cash settlement", async () => {
+    const settlement = {
+      id: "settlement-1",
+      courierId,
+      settlementDate: "2026-06-05",
+      status: "PENDING",
+      periodEndAt: new Date(Date.now() - 31 * 60_000),
+      netDueToRapivCents: 1250
+    } as CashSettlement;
+    const { service } = createService({ cashSettlements: [settlement] });
+
+    await assert.rejects(
+      service.updateCourierAvailability(courierId, {
+        status: "AVAILABLE",
+        latitude: 20.0289,
+        longitude: -96.6472
+      }),
+      ConflictException
+    );
+  });
+
+  it("blocks new orders when a business cash payout is overdue", async () => {
+    const order = createOrder({
+      status: "DELIVERED",
+      courierId,
+      paymentMethod: "CASH",
+      paymentStatus: "PAID",
+      cashCollectedAt: new Date(Date.now() - 121 * 60_000),
+      businessPayoutCents: 2250,
+      businessCashPayoutStatus: "PENDING"
+    });
+    const { service } = createService({ orders: [order] });
+
+    await assert.rejects(
+      service.updateCourierAvailability(courierId, {
+        status: "AVAILABLE",
+        latitude: 20.0289,
+        longitude: -96.6472
+      }),
+      ConflictException
+    );
+  });
+
+  it("lets the business confirm a delivered cash payout", async () => {
+    const order = createOrder({
+      status: "DELIVERED",
+      courierId,
+      paymentMethod: "CASH",
+      paymentStatus: "PAID",
+      businessPayoutCents: 2250,
+      businessCashPayoutStatus: "PENDING"
+    });
+    const { service } = createService({ orders: [order] });
+
+    const businessOrder = await service.confirmBusinessCashPayout(
+      ownerUserId,
+      businessId,
+      order.id
+    );
+
+    assert.equal(businessOrder.businessCashPayoutStatus, "CONFIRMED");
+    assert.ok(order.businessCashPayoutConfirmedAt);
+    assert.equal(order.businessCashPayoutConfirmedByUserId, ownerUserId);
+  });
+
+  it("lets the business confirm cash payment for a ready pickup order", async () => {
+    const order = createOrder({
+      status: "READY",
+      fulfillmentMethod: "PICKUP",
+      paymentMethod: "CASH",
+      paymentStatus: "UNPAID",
+      businessPayoutCents: 2250,
+      businessCashPayoutStatus: "PENDING"
+    });
+    const { service } = createService({ orders: [order] });
+
+    const businessOrder = await service.confirmBusinessCashPayout(
+      ownerUserId,
+      businessId,
+      order.id
+    );
+
+    assert.equal(businessOrder.status, "DELIVERED");
+    assert.equal(businessOrder.paymentStatus, "PAID");
+    assert.equal(businessOrder.businessCashPayoutStatus, "CONFIRMED");
+    assert.equal(order.cashReceivedCents, 1200);
+    assert.equal(order.cashChangeCents, 0);
   });
 
   it("adds a missing delivery offer for a newly available courier", async () => {
@@ -704,6 +1417,23 @@ describe("OrdersService", () => {
     );
   });
 
+  it("queues courier payout when a paid card order is delivered", async () => {
+    const order = createOrder({
+      status: "ON_THE_WAY",
+      courierId,
+      paymentMethod: "CARD",
+      paymentStatus: "PAID",
+      courierPayoutCents: 2000,
+      courierPayoutStatus: "PENDING"
+    });
+    const { service, queuedCourierPayoutOrderGroupIds } = createService({ orders: [order] });
+
+    const delivered = await service.updateCourierDeliveryStatus(courierId, orderGroupId, "DELIVERED");
+
+    assert.equal(delivered.status, "DELIVERED");
+    assert.deepEqual(queuedCourierPayoutOrderGroupIds, [orderGroupId]);
+  });
+
   it("limits order access by user role and ownership", async () => {
     const order = createOrder({ courierId });
     const { service } = createService({
@@ -801,5 +1531,50 @@ describe("OrdersService", () => {
       service.getDeliveryLocation("stranger-1", orderGroupId),
       ForbiddenException
     );
+  });
+
+  it("lets the assigned courier notify arrival once while on the way", async () => {
+    const order = createOrder({ status: "ON_THE_WAY", courierId });
+    const { service, sentNotifications } = createService({ orders: [order] });
+
+    const firstNotice = await service.notifyCustomerCourierArrived(courierId, orderGroupId);
+    const duplicateNotice = await service.notifyCustomerCourierArrived(courierId, orderGroupId);
+
+    assert.deepEqual(firstNotice, { ok: true, alreadyNotified: false });
+    assert.deepEqual(duplicateNotice, { ok: true, alreadyNotified: true });
+    assert.equal(order.arrivalNotifiedAt instanceof Date, true);
+    assert.equal(sentNotifications.length, 1);
+    assert.equal(sentNotifications[0].message.data?.type, "COURIER_ARRIVED");
+  });
+
+  it("rejects manual arrival notice before the courier is on the way", async () => {
+    const order = createOrder({ status: "PICKED_UP", courierId });
+    const { service } = createService({ orders: [order] });
+
+    await assert.rejects(
+      service.notifyCustomerCourierArrived(courierId, orderGroupId),
+      ConflictException
+    );
+  });
+
+  it("creates and refreshes courier Stripe Connect profile", async () => {
+    const { service, courierProfiles, stripeAccountCalls } = createService();
+
+    const onboarding = await service.createCourierStripeOnboardingLink(courierId);
+
+    assert.equal(onboarding.url, "https://connect.stripe.test/onboarding");
+    assert.equal(onboarding.profile.stripeConnectedAccountId, "acct_courier_1");
+    assert.equal(onboarding.profile.stripePlatformAccountId, "acct_platform_1");
+    assert.equal(stripeAccountCalls.length, 1);
+    assert.deepEqual(
+      (stripeAccountCalls[0] as { metadata: Record<string, string> }).metadata,
+      { courier_user_id: courierId }
+    );
+
+    const refreshed = await service.refreshCourierStripeConnectStatus(courierId);
+
+    assert.equal(refreshed.stripePayoutsEnabled, true);
+    assert.equal(refreshed.stripeDetailsSubmitted, true);
+    assert.equal(courierProfiles.length, 1);
   });
 });

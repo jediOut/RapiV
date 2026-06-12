@@ -4,20 +4,55 @@
     "slug": "rapiv-repartidor",
     "version": "1.0.0",
     "orientation": "portrait",
+    "scheme": [
+      "rapiv-repartidor",
+      "com.rapiv.courier"
+    ],
     "userInterfaceStyle": "light",
-    "assetBundlePatterns": ["**/*"],
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
-      "supportsTabletMode": true,
+      "supportsTablet": true,
+      "bundleIdentifier": "com.rapiv.courier",
+      "buildNumber": "1",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "RapiV usa tu ubicacion durante la entrega para mostrar la ruta al cliente."
       }
     },
     "android": {
-      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "POST_NOTIFICATIONS"],
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "POST_NOTIFICATIONS",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ],
       "adaptiveIcon": {
-        "backgroundColor": "#ffffff"
-      }
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#EA580C"
+      },
+      "package": "com.rapiv.courier",
+      "versionCode": 2
     },
-    "plugins": ["expo-location", "expo-notifications"]
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-location",
+      "expo-notifications",
+      "expo-web-browser"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "f1e42dad-b41c-4e9e-a20e-7e985c07ee79"
+      }
+    }
   }
 }

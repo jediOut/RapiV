@@ -1,4 +1,4 @@
-import { IsEmail, IsOptional, IsString, MinLength, ValidateIf } from "class-validator";
+import { Equals, IsEmail, IsIn, IsOptional, IsString, MinLength, ValidateIf } from "class-validator";
 import type { RegisterPayload } from "@rapidin/contracts";
 
 export class RegisterDto implements RegisterPayload {
@@ -30,4 +30,13 @@ export class RegisterDto implements RegisterPayload {
   @IsOptional()
   @IsString()
   phone?: string;
+
+  @Equals(true, { message: "Debes aceptar los terminos y condiciones" })
+  termsAccepted!: true;
+
+  @IsString()
+  termsVersion!: string;
+
+  @IsIn(["cliente", "negocio", "repartidor"])
+  termsApp!: "cliente" | "negocio" | "repartidor";
 }

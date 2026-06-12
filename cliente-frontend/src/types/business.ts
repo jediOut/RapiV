@@ -1,10 +1,11 @@
 import type {
+  BusinessOrder,
   Business,
   Product,
   OrderGroupStatus
 } from "@rapidin/contracts";
 
-export type { Business, Product };
+export type { Business, BusinessOrder, Product };
 
 export interface CartItem {
   product: Product;
@@ -24,12 +25,21 @@ export interface Order {
     | 'delivered'
     | 'cancelled';
   totalPrice: number;
+  subtotalCents?: number;
+  deliveryFeeCents?: number;
   deliveryAddress: string;
   createdAt: string;
   updatedAt: string;
   items: OrderItem[];
   sourceStatus?: OrderGroupStatus;
+  businessOrders?: BusinessOrder[];
+  courierId?: string | null;
+  paymentMethod?: 'CARD' | 'CASH';
+  fulfillmentMethod?: 'DELIVERY' | 'PICKUP';
   paymentStatus?: 'UNPAID' | 'PAID' | 'REFUNDED';
+  cashReceivedCents?: number | null;
+  cashChangeCents?: number | null;
+  cashCollectedAt?: string | null;
   paidAt?: string | null;
 }
 

@@ -38,6 +38,15 @@ export class User {
   @Column({ type: 'simple-array', default: '["CUSTOMER"]' })
   roles!: UserRole[];
 
+  @Column({ type: 'timestamp', nullable: true })
+  termsAcceptedAt?: Date | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  termsVersion?: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  termsApp?: string | null;
+
   @CreateDateColumn()
   createdAt!: Date;
 

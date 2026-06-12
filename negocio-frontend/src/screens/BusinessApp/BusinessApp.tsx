@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Alert, Linking, ScrollView, Text, View } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Alert, AppState, Linking, ScrollView, Text, View } from "react-native";
 
 import { Header } from "../../components/Header";
 import { StateView } from "../../components/StateView";
@@ -8,6 +8,7 @@ import { TabBar } from "../../components/TabBar";
 import {
   createBusiness,
   createBusinessProduct,
+  fetchBusinessCommissionSettlements,
   createStripeOnboardingLink,
   fetchBusinessProducts,
   fetchMyBusinesses,
@@ -20,6 +21,7 @@ import { createMediaUploadUrl, uploadImageToS3 } from "../../services/mediaApi";
 import type { ImagePickerAsset } from "expo-image-picker";
 
 import {
+  confirmBusinessCashPayout,
   fetchBusinessOrders,
   updateBusinessOrderStatus
 } from "../../services/orderApi";
@@ -28,6 +30,7 @@ import type { AuthSession } from "../../types/auth";
 
 import type {
   Business,
+  BusinessCommissionSettlement,
   BusinessOrder,
   CreateProductPayload,
   Product
@@ -73,6 +76,9 @@ export function BusinessApp({
   const [orders, setOrders] =
     useState<BusinessOrder[]>([]);
 
+  const [businessCommissionSettlements, setBusinessCommissionSettlements] =
+    useState<BusinessCommissionSettlement[]>([]);
+
   const [prepTime, setPrepTime] =
     useState("25");
 
@@ -103,6 +109,11 @@ export function BusinessApp({
 
   const [businessError, setBusinessError] =
     useState<string | null>(null);
+
+  const [ordersError, setOrdersError] =
+    useState<string | null>(null);
+  const isRefreshingOrdersRef =
+    useRef(false);
 
   const businessProfile = {
     name:
@@ -139,9 +150,6 @@ export function BusinessApp({
 
     stripeRequirementsCurrentlyDue:
       selectedBusiness?.stripeRequirementsCurrentlyDue ?? null,
-
-    minimumOrderItems:
-      selectedBusiness?.minimumOrderItems ?? 1,
 
     alertsEnabled: true,
 
@@ -181,6 +189,7 @@ export function BusinessApp({
       setIsLoadingOrders(true);
 
       setBusinessError(null);
+      setOrdersError(null);
 
       try {
         const nextBusinesses =
@@ -202,12 +211,14 @@ export function BusinessApp({
         if (!business) {
           setProducts([]);
           setOrders([]);
+          setBusinessCommissionSettlements([]);
           return;
         }
 
         const [
           businessProducts,
-          businessOrders
+          businessOrders,
+          commissionSettlements
         ] = await Promise.all([
           fetchBusinessProducts(
             session.accessToken,
@@ -215,6 +226,11 @@ export function BusinessApp({
           ),
 
           fetchBusinessOrders(
+            session.accessToken,
+            business.id
+          ),
+
+          fetchBusinessCommissionSettlements(
             session.accessToken,
             business.id
           )
@@ -226,6 +242,10 @@ export function BusinessApp({
 
         setOrders(
           businessOrders
+        );
+
+        setBusinessCommissionSettlements(
+          commissionSettlements
         );
       } catch (error) {
         setBusinessError(
@@ -349,10 +369,7 @@ export function BusinessApp({
               payload.acceptsCash,
 
             acceptsCard:
-              payload.acceptsCard,
-
-            minimumOrderItems:
-              payload.minimumOrderItems
+              payload.acceptsCard
           }
         );
 
@@ -481,10 +498,22 @@ export function BusinessApp({
   }
 
   async function loadBusinessOrders(
-    businessId: string
+    businessId: string,
+    options: { showLoading?: boolean } = {}
   ) {
+    if (isRefreshingOrdersRef.current) {
+      return;
+    }
+
+    isRefreshingOrdersRef.current = true;
+    const showLoading =
+      options.showLoading ?? true;
+
     try {
-      setIsLoadingOrders(true);
+      if (showLoading) {
+        setIsLoadingOrders(true);
+      }
+      setOrdersError(null);
 
       const businessOrders =
         await fetchBusinessOrders(
@@ -496,17 +525,53 @@ export function BusinessApp({
         businessOrders
       );
     } catch (error) {
-      setBusinessError(
+      setOrdersError(
         error instanceof Error
           ? error.message
           : "No se pudieron cargar pedidos"
       );
     } finally {
-      setIsLoadingOrders(
-        false
-      );
+      if (showLoading) {
+        setIsLoadingOrders(
+          false
+        );
+      }
+      isRefreshingOrdersRef.current = false;
     }
   }
+
+  useEffect(() => {
+    if (!selectedBusiness || !["home", "orders"].includes(screen)) {
+      return;
+    }
+
+    const refreshOrders = () => {
+      void loadBusinessOrders(
+        selectedBusiness.id,
+        { showLoading: false }
+      );
+    };
+
+    refreshOrders();
+
+    const interval = setInterval(
+      refreshOrders,
+      5000
+    );
+    const subscription = AppState.addEventListener(
+      "change",
+      (state) => {
+        if (state === "active") {
+          refreshOrders();
+        }
+      }
+    );
+
+    return () => {
+      clearInterval(interval);
+      subscription.remove();
+    };
+  }, [screen, selectedBusiness?.id]);
 
   async function toggleProduct(
     id: string
@@ -736,6 +801,7 @@ export function BusinessApp({
       | "PREPARING"
       | "READY"
       | "REJECTED"
+      | "DELIVERED"
   ) {
     if (!selectedBusiness) {
       return;
@@ -753,10 +819,43 @@ export function BusinessApp({
         selectedBusiness.id
       );
     } catch (error) {
-      setBusinessError(
-        error instanceof Error
-          ? error.message
-          : "No se pudo actualizar pedido"
+      const message = error instanceof Error
+        ? error.message
+        : "No se pudo actualizar pedido";
+
+      Alert.alert(
+        "Pedido no actualizado",
+        message
+      );
+    }
+  }
+
+  async function handleConfirmCashPayout(order: BusinessOrder) {
+    if (!selectedBusiness) {
+      return;
+    }
+
+    try {
+      await confirmBusinessCashPayout(
+        session.accessToken,
+        selectedBusiness.id,
+        order.id
+      );
+
+      await loadBusinessOrders(selectedBusiness.id);
+
+      Alert.alert(
+        "Pago confirmado",
+        "Confirmaste que recibiste el dinero del repartidor."
+      );
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "No se pudo confirmar el pago recibido";
+
+      Alert.alert(
+        "No pudimos confirmar",
+        message
       );
     }
   }
@@ -780,26 +879,11 @@ export function BusinessApp({
     !selectedBusiness &&
     !isLoadingProducts
   ) {
-    const roles =
-      session.user.roles ?? [];
-
-    const profileName =
-      roles.includes("COURIER")
-        ? "repartidor"
-        : roles.includes(
-              "CUSTOMER"
-            )
-          ? "cliente"
-          : "otro tipo";
-
     return (
       <BusinessProfileRequiredScreen
         error={businessError}
         isLoading={
           isCreatingBusiness
-        }
-        profileName={
-          profileName
         }
         onCreateBusiness={
           handleCreateBusiness
@@ -847,7 +931,7 @@ export function BusinessApp({
 
         {screen === "orders" && (
           <OrdersScreen
-            error={businessError}
+            error={ordersError}
             isLoading={
               isLoadingOrders
             }
@@ -857,6 +941,9 @@ export function BusinessApp({
               }
             }}
             orders={orders}
+            onConfirmCashPayout={
+              handleConfirmCashPayout
+            }
             onUpdateStatus={
               handleUpdateOrderStatus
             }
@@ -894,6 +981,9 @@ export function BusinessApp({
           <SettingsScreen
             businessProfile={
               businessProfile
+            }
+            businessCommissionSettlements={
+              businessCommissionSettlements
             }
             isLoading={
               isUpdatingBusiness

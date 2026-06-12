@@ -19,11 +19,11 @@ export type Business = {
   acceptsCash?: boolean;
   acceptsCard?: boolean;
   stripeConnectedAccountId?: string | null;
+  stripePlatformAccountId?: string | null;
   stripeChargesEnabled?: boolean;
   stripePayoutsEnabled?: boolean;
   stripeDetailsSubmitted?: boolean;
   stripeRequirementsCurrentlyDue?: string[] | null;
-  minimumOrderItems?: number;
   isOpen?: boolean;
   createdAt?: string | Date;
   updatedAt?: string | Date;
@@ -37,5 +37,4 @@ export type CreateBusinessPayload = {
   logo?: string;
   acceptsCash?: boolean;
   acceptsCard?: boolean;
-  minimumOrderItems?: number;
 };

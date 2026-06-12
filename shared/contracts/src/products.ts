@@ -6,7 +6,10 @@ export type Product = {
   image?: string | null;
   category?: string | null;
   priceCents: number;
+  minimumQuantityPerOrder: number;
   available: boolean;
+  rating?: number | null;
+  ratingCount?: number;
   stock?: number;
   createdAt?: string | Date;
   updatedAt?: string | Date;
@@ -14,8 +17,10 @@ export type Product = {
 
 export type CreateProductPayload = {
   name: string;
+  description?: string;
   category: string;
   priceCents: number;
+  minimumQuantityPerOrder?: number;
   image?: string;
 };
 

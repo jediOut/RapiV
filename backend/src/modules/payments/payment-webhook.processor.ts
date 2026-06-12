@@ -3,8 +3,8 @@ import { Job, Worker } from "bullmq";
 
 import {
   PAYMENT_WEBHOOK_QUEUE,
+  PaymentJob,
   PaymentProcessingQueue,
-  PaymentWebhookJob
 } from "./payment-processing.queue";
 import { redisConnection } from "../../common/queue/redis-connection";
 import { MonitoringService } from "../monitoring/monitoring.service";
@@ -13,7 +13,7 @@ import { PaymentsService } from "./payments.service";
 @Injectable()
 export class PaymentWebhookProcessor implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PaymentWebhookProcessor.name);
-  private worker?: Worker<PaymentWebhookJob>;
+  private worker?: Worker<PaymentJob>;
 
   constructor(
     private readonly paymentsService: PaymentsService,
@@ -22,7 +22,7 @@ export class PaymentWebhookProcessor implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    this.worker = new Worker<PaymentWebhookJob>(
+    this.worker = new Worker<PaymentJob>(
       PAYMENT_WEBHOOK_QUEUE,
       (job) => this.process(job),
       {
@@ -61,9 +61,16 @@ export class PaymentWebhookProcessor implements OnModuleInit, OnModuleDestroy {
 
     const recoverableEventIds = await this.paymentsService.findRecoverablePaymentEventIds();
     await this.paymentQueue.addWebhookEvents(recoverableEventIds);
+    const recoverableCourierPayoutOrderGroupIds =
+      await this.paymentsService.findRecoverableCourierPayoutOrderGroupIds();
+    await this.paymentQueue.addCourierPayouts(recoverableCourierPayoutOrderGroupIds);
 
     if (recoverableEventIds.length > 0) {
       this.logger.log(`Requeued ${recoverableEventIds.length} recoverable payment webhook events`);
+    }
+
+    if (recoverableCourierPayoutOrderGroupIds.length > 0) {
+      this.logger.log(`Requeued ${recoverableCourierPayoutOrderGroupIds.length} recoverable courier payouts`);
     }
   }
 
@@ -71,12 +78,21 @@ export class PaymentWebhookProcessor implements OnModuleInit, OnModuleDestroy {
     await this.worker?.close();
   }
 
-  private async process(job: Job<PaymentWebhookJob>): Promise<void> {
-    this.monitoring.recordPaymentEvent("webhook_job_started", {
-      eventId: job.data.eventId,
+  private async process(job: Job<PaymentJob>): Promise<void> {
+    if (job.data.type === "WEBHOOK_EVENT") {
+      this.monitoring.recordPaymentEvent("webhook_job_started", {
+        eventId: job.data.eventId,
+        jobId: job.id
+      });
+      await this.paymentsService.processWebhookEvent(job.data.eventId);
+      return;
+    }
+
+    this.monitoring.recordPaymentEvent("courier_payout_job_started", {
+      orderGroupId: job.data.orderGroupId,
       jobId: job.id
     });
-    await this.paymentsService.processWebhookEvent(job.data.eventId);
+    await this.paymentsService.processCourierPayout(job.data.orderGroupId);
   }
 
   private jobDurationMs(job: Job): number {

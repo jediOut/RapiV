@@ -1,6 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { EntityManager, Repository } from "typeorm";
+import { Repository } from "typeorm";
 
 import { User, UserRole } from "./user.entity";
 
@@ -11,6 +11,9 @@ type CreateUserInput = {
   phone?: string;
   passwordHash: string;
   roles: UserRole[];
+  termsAcceptedAt?: Date;
+  termsVersion?: string;
+  termsApp?: string;
 };
 
 type UpdateUserInput = {
@@ -49,6 +52,9 @@ export class UsersService {
       phone: input.phone?.trim() || undefined,
       passwordHash: input.passwordHash,
       roles: input.roles,
+      termsAcceptedAt: input.termsAcceptedAt,
+      termsVersion: input.termsVersion,
+      termsApp: input.termsApp,
     });
 
     try {
@@ -74,22 +80,6 @@ export class UsersService {
 
     if (!user) {
       throw new NotFoundException("User not found");
-    }
-
-    return user;
-  }
-
-  async addRole(userId: string, role: UserRole, manager?: EntityManager): Promise<User> {
-    const repository = manager?.getRepository(User) ?? this.userRepository;
-    const user = await repository.findOne({ where: { id: userId } });
-
-    if (!user) {
-      throw new NotFoundException("User not found");
-    }
-
-    if (!user.roles.includes(role)) {
-      user.roles.push(role);
-      return repository.save(user);
     }
 
     return user;

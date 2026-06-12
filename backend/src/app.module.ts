@@ -14,8 +14,11 @@ import { UsersModule } from "./modules/users/users.module";
 import { NotificationsModule } from "./modules/notifications/notifications.module";
 import { PaymentsModule } from "./modules/payments/payments.module";
 import { HealthController } from "./health.controller";
+import { LegalController } from "./legal.controller";
 import { MediaModule } from "./modules/media/media.module";
 import { MonitoringModule } from "./modules/monitoring/monitoring.module";
+import { RatingsModule } from "./modules/ratings/ratings.module";
+import { AdminModule } from "./modules/admin/admin.module";
 
 @Module({
   imports: [
@@ -34,6 +37,8 @@ import { MonitoringModule } from "./modules/monitoring/monitoring.module";
     NotificationsModule,
     MediaModule,
     PaymentsModule,
+    RatingsModule,
+    AdminModule,
     OrdersModule
   ],
   providers: [
@@ -46,6 +51,6 @@ import { MonitoringModule } from "./modules/monitoring/monitoring.module";
       useClass: RolesGuard
     }
   ],
-  controllers: [HealthController]
+  controllers: [HealthController, LegalController]
 })
 export class AppModule {}

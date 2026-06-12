@@ -50,6 +50,14 @@ resource "aws_security_group" "staging" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  ingress {
+    description = "SSH deploy access"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = [var.allowed_ssh_cidr]
+  }
+
   egress {
     description = "Outbound internet"
     from_port   = 0
@@ -99,24 +107,6 @@ resource "aws_iam_role_policy" "media_bucket_access" {
           "s3:PutObject"
         ]
         Resource = "${aws_s3_bucket.media.arn}/*"
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy" "deploy_bucket_read" {
-  name = "${var.project_name}-staging-lite-deploy-read"
-  role = aws_iam_role.ssm.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject"
-        ]
-        Resource = "${aws_s3_bucket.deploy_artifacts.arn}/*"
       }
     ]
   })
@@ -178,130 +168,6 @@ resource "aws_s3_bucket_cors_configuration" "media" {
   }
 }
 
-resource "aws_s3_bucket" "deploy_artifacts" {
-  bucket = local.deploy_artifacts_bucket_name
-
-  tags = merge(local.tags, {
-    Name = local.deploy_artifacts_bucket_name
-  })
-}
-
-resource "aws_s3_bucket_public_access_block" "deploy_artifacts" {
-  bucket = aws_s3_bucket.deploy_artifacts.id
-
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "deploy_artifacts" {
-  bucket = aws_s3_bucket.deploy_artifacts.id
-
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-  }
-}
-
-resource "aws_s3_bucket_versioning" "deploy_artifacts" {
-  bucket = aws_s3_bucket.deploy_artifacts.id
-
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-resource "aws_s3_bucket_lifecycle_configuration" "deploy_artifacts" {
-  bucket = aws_s3_bucket.deploy_artifacts.id
-
-  rule {
-    id     = "expire-deploy-artifacts"
-    status = "Enabled"
-
-    filter {
-      prefix = "releases/"
-    }
-
-    expiration {
-      days = 7
-    }
-
-    noncurrent_version_expiration {
-      noncurrent_days = 7
-    }
-  }
-}
-
-resource "aws_iam_role" "github_actions_deploy" {
-  name = "${var.project_name}-staging-lite-github-deploy"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = "sts:AssumeRoleWithWebIdentity"
-        Principal = {
-          Federated = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com"
-        }
-        Condition = {
-          StringEquals = {
-            "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-          }
-          StringLike = {
-            "token.actions.githubusercontent.com:sub" = "repo:${var.github_owner}/${var.github_repo}:ref:refs/heads/${var.github_branch}"
-          }
-        }
-      }
-    ]
-  })
-
-  tags = local.tags
-}
-
-resource "aws_iam_role_policy" "github_actions_deploy" {
-  name = "${var.project_name}-staging-lite-github-deploy"
-  role = aws_iam_role.github_actions_deploy.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "DeployArtifactAccess"
-        Effect = "Allow"
-        Action = [
-          "s3:PutObject",
-          "s3:GetObject",
-          "s3:DeleteObject"
-        ]
-        Resource = "${aws_s3_bucket.deploy_artifacts.arn}/releases/*"
-      },
-      {
-        Sid    = "SendSsmDeployCommand"
-        Effect = "Allow"
-        Action = [
-          "ssm:SendCommand"
-        ]
-        Resource = [
-          "arn:aws:ssm:${var.aws_region}::document/AWS-RunShellScript",
-          "arn:aws:ec2:${var.aws_region}:${data.aws_caller_identity.current.account_id}:instance/${aws_instance.staging.id}"
-        ]
-      },
-      {
-        Sid    = "ReadSsmDeployCommandResult"
-        Effect = "Allow"
-        Action = [
-          "ssm:GetCommandInvocation",
-          "ssm:ListCommandInvocations"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-}
-
 resource "aws_instance" "staging" {
   ami                         = data.aws_ami.ubuntu.id
   instance_type               = var.instance_type
@@ -314,15 +180,6 @@ resource "aws_instance" "staging" {
     volume_size = var.root_volume_size_gb
     volume_type = "gp3"
     encrypted   = true
-  }
-
-  metadata_options {
-    http_endpoint = "enabled"
-    http_tokens   = "required"
-  }
-
-  lifecycle {
-    ignore_changes = [ami]
   }
 
   user_data = <<-USER_DATA
@@ -357,8 +214,7 @@ resource "aws_route53_record" "api" {
 }
 
 locals {
-  media_bucket_name            = var.media_bucket_name != "" ? var.media_bucket_name : "${var.project_name}-media-staging-${data.aws_caller_identity.current.account_id}"
-  deploy_artifacts_bucket_name = var.deploy_artifacts_bucket_name != "" ? var.deploy_artifacts_bucket_name : "${var.project_name}-deploy-staging-${data.aws_caller_identity.current.account_id}"
+  media_bucket_name = var.media_bucket_name != "" ? var.media_bucket_name : "${var.project_name}-media-staging-${data.aws_caller_identity.current.account_id}"
 
   tags = {
     Project     = var.project_name

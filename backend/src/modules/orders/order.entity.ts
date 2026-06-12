@@ -17,7 +17,10 @@ import type {
   BusinessOrderStatus as ContractBusinessOrderStatus,
   OrderGroup as ContractOrderGroup,
   OrderGroupStatus as ContractOrderGroupStatus,
-  OrderItemSnapshot as ContractOrderItemSnapshot
+  OrderItemSnapshot as ContractOrderItemSnapshot,
+  OrderFulfillmentMethod as ContractOrderFulfillmentMethod,
+  OrderPaymentMethod as ContractOrderPaymentMethod,
+  OrderPaymentStatus as ContractOrderPaymentStatus
 } from "@rapidin/contracts";
 
 export type OrderStatus =
@@ -36,7 +39,10 @@ export type OrderGroupStatus = ContractOrderGroupStatus;
 export type OrderItemSnapshot = ContractOrderItemSnapshot;
 export type BusinessOrder = ContractBusinessOrder;
 export type OrderGroup = ContractOrderGroup;
-export type OrderPaymentStatus = 'UNPAID' | 'PAID' | 'REFUNDED';
+export type OrderFulfillmentMethod = ContractOrderFulfillmentMethod;
+export type OrderPaymentMethod = ContractOrderPaymentMethod;
+export type OrderPaymentStatus = ContractOrderPaymentStatus;
+export type BusinessCashPayoutStatus = 'NOT_APPLICABLE' | 'PENDING' | 'CONFIRMED' | 'CANCELLED';
 
 @Index('IDX_orders_user_idempotency', ['userId', 'idempotencyKey'], { unique: true })
 @Entity('orders')
@@ -80,11 +86,65 @@ export class Order {
   @Column({ type: 'varchar', default: 'UNPAID' })
   paymentStatus!: OrderPaymentStatus;
 
+  @Column({ type: 'varchar', default: 'CARD' })
+  paymentMethod!: OrderPaymentMethod;
+
+  @Column({ type: 'varchar', default: 'DELIVERY' })
+  fulfillmentMethod!: OrderFulfillmentMethod;
+
+  @Column({ type: 'int', nullable: true })
+  cashReceivedCents?: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  cashChangeCents?: number | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  cashCollectedAt?: Date | null;
+
   @Column({ type: 'timestamp', nullable: true })
   paidAt?: Date | null;
 
   @Column({ type: 'int', default: 0 })
   subtotalCents!: number;
+
+  @Column({ type: 'int', default: 0 })
+  deliveryFeeCents!: number;
+
+  @Column({ type: 'int', default: 0 })
+  courierPayoutCents!: number;
+
+  @Column({ type: 'varchar', default: 'NOT_APPLICABLE' })
+  courierPayoutStatus!: 'NOT_APPLICABLE' | 'PENDING' | 'PAID' | 'FAILED' | 'CANCELLED';
+
+  @Column({ type: 'timestamp', nullable: true })
+  courierPayoutPaidAt?: Date | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  courierPayoutProviderTransferId?: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  courierPayoutFailedAt?: Date | null;
+
+  @Column({ type: 'text', nullable: true })
+  courierPayoutError?: string | null;
+
+  @Column({ type: 'int', default: 0 })
+  platformDeliveryMarginCents!: number;
+
+  @Column({ type: 'int', default: 0 })
+  businessCommissionCents!: number;
+
+  @Column({ type: 'int', default: 0 })
+  businessPayoutCents!: number;
+
+  @Column({ type: 'varchar', default: 'NOT_APPLICABLE' })
+  businessCashPayoutStatus!: BusinessCashPayoutStatus;
+
+  @Column({ type: 'timestamp', nullable: true })
+  businessCashPayoutConfirmedAt?: Date | null;
+
+  @Column({ type: 'uuid', nullable: true })
+  businessCashPayoutConfirmedByUserId?: string | null;
 
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   totalPrice!: number;

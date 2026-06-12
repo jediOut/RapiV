@@ -21,6 +21,7 @@ import { PaymentProviderService, PaymentSplit } from "./payment-provider.service
 import { PaymentProcessingQueue } from "./payment-processing.queue";
 import { Payment, PaymentStatus } from "./payment.entity";
 import { MonitoringService } from "../monitoring/monitoring.service";
+import { CourierProfile } from "../users/courier-profile.entity";
 
 type PaymentResponse = {
   id: string;
@@ -43,6 +44,10 @@ export class PaymentsService {
     private readonly paymentEventRepository: Repository<PaymentEvent>,
     @InjectRepository(Business)
     private readonly businessRepository: Repository<Business>,
+    @InjectRepository(CourierProfile)
+    private readonly courierProfileRepository: Repository<CourierProfile>,
+    @InjectRepository(Order)
+    private readonly orderRepository: Repository<Order>,
     private readonly dataSource: DataSource,
     private readonly ordersService: OrdersService,
     private readonly providerService: PaymentProviderService,
@@ -169,13 +174,34 @@ export class PaymentsService {
     return this.toResponse(syncedPayment ?? payment);
   }
 
+  async syncPaymentByCheckoutSession(providerPaymentId: string): Promise<PaymentResponse> {
+    const payment = await this.paymentRepository.findOne({
+      where: {
+        provider: this.providerService.providerName,
+        providerPaymentId
+      }
+    });
+
+    if (!payment) {
+      throw new BadRequestException("Payment not found for Stripe Checkout session");
+    }
+
+    const providerDetails = await this.providerService.getPayment(providerPaymentId);
+    await this.applyProviderPaymentDetails(payment.id, providerDetails);
+
+    const syncedPayment = await this.paymentRepository.findOne({
+      where: { id: payment.id }
+    });
+
+    return this.toResponse(syncedPayment ?? payment);
+  }
+
   async receiveWebhook(
     signature: string | undefined,
     rawBody: Buffer | undefined,
-    body: PaymentWebhookDto,
-    requestId?: string
+    body: PaymentWebhookDto
   ): Promise<{ received: true; duplicate: boolean }> {
-    this.assertValidWebhookSignature(signature, rawBody, body, requestId);
+    this.assertValidWebhookSignature(signature, rawBody, body);
     const providerPaymentId = this.providerPaymentIdFromWebhook(body);
 
     const event = this.paymentEventRepository.create({
@@ -266,6 +292,29 @@ export class PaymentsService {
     return events.map((event) => event.id);
   }
 
+  async findRecoverableCourierPayoutOrderGroupIds(): Promise<string[]> {
+    const orders = await this.orderRepository.find({
+      select: {
+        orderGroupId: true,
+        courierPayoutCents: true
+      },
+      where: {
+        status: "DELIVERED",
+        paymentMethod: "CARD",
+        paymentStatus: "PAID",
+        courierPayoutStatus: In(["PENDING", "FAILED"])
+      },
+      order: { updatedAt: "ASC" },
+      take: 500
+    });
+
+    return [...new Set(
+      orders
+        .filter((order) => Number(order.courierPayoutCents ?? 0) > 0)
+        .map((order) => order.orderGroupId)
+    )];
+  }
+
   private async applyProviderPaymentDetails(
     paymentId: string,
     providerDetails: {
@@ -290,22 +339,40 @@ export class PaymentsService {
 
       const nextStatus = this.statusFromProviderStatus(providerDetails.status);
 
-      if (nextStatus === "SUCCEEDED" && !payment.providerMetadata?.stripeTransfersCreatedAt) {
+      if (
+        nextStatus === "SUCCEEDED" &&
+        !payment.providerMetadata?.stripeTransfersCreatedAt &&
+        !payment.providerMetadata?.stripeTransfersFailedAt
+      ) {
         const splits = this.paymentSplitsFromMetadata(payment.providerMetadata);
-        const transfers = await this.providerService.createTransfersForPayment({
-          localPaymentId: payment.id,
-          orderGroupId: payment.orderGroupId,
-          providerPaymentId: providerDetails.providerPaymentId,
-          latestChargeId: providerDetails.latestChargeId,
-          currency: providerDetails.currency ?? payment.currency,
-          splits
-        });
+        try {
+          const transfers = await this.providerService.createTransfersForPayment({
+            localPaymentId: payment.id,
+            orderGroupId: payment.orderGroupId,
+            providerPaymentId: providerDetails.providerPaymentId,
+            latestChargeId: providerDetails.latestChargeId,
+            currency: providerDetails.currency ?? payment.currency,
+            splits
+          });
 
-        payment.providerMetadata = {
-          ...(payment.providerMetadata ?? {}),
-          stripeTransfers: transfers,
-          stripeTransfersCreatedAt: new Date().toISOString()
-        };
+          payment.providerMetadata = {
+            ...(payment.providerMetadata ?? {}),
+            stripeTransfers: transfers,
+            stripeTransfersCreatedAt: new Date().toISOString()
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unknown Stripe transfer error";
+          payment.providerMetadata = {
+            ...(payment.providerMetadata ?? {}),
+            stripeTransfersFailedAt: new Date().toISOString(),
+            stripeTransfersError: message
+          };
+          this.monitoring?.recordPaymentEvent("transfers_failed", {
+            paymentId,
+            orderGroupId: payment.orderGroupId,
+            error: message
+          });
+        }
       }
 
       payment.status = nextStatus;
@@ -348,19 +415,126 @@ export class PaymentsService {
 
     if (paidOrderGroupId) {
       await this.ordersService.scheduleBusinessAcceptanceTimeouts(paidOrderGroupId);
+      await this.processingQueue.addCourierPayout(paidOrderGroupId);
     }
+  }
+
+  async processCourierPayout(orderGroupId: string): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      const orders = await manager.find(Order, {
+        where: { orderGroupId },
+        lock: { mode: "pessimistic_write" }
+      });
+
+      if (!orders.length) {
+        throw new BadRequestException("Order group not found for courier payout");
+      }
+
+      const payoutOrder = orders.find((order) => Number(order.courierPayoutCents ?? 0) > 0);
+
+      if (!payoutOrder || payoutOrder.courierPayoutStatus === "NOT_APPLICABLE") {
+        return;
+      }
+
+      if (payoutOrder.courierPayoutStatus === "PAID" || payoutOrder.courierPayoutStatus === "CANCELLED") {
+        return;
+      }
+
+      if (payoutOrder.paymentMethod !== "CARD") {
+        return;
+      }
+
+      if (
+        payoutOrder.status !== "DELIVERED" ||
+        payoutOrder.paymentStatus !== "PAID" ||
+        !payoutOrder.courierId
+      ) {
+        return;
+      }
+
+      const payment = await manager.findOne(Payment, {
+        where: {
+          orderGroupId,
+          status: "SUCCEEDED"
+        }
+      });
+
+      if (!payment) {
+        return;
+      }
+
+      const courierProfile = await manager.findOne(CourierProfile, {
+        where: { userId: payoutOrder.courierId }
+      });
+
+      if (
+        !courierProfile?.stripeConnectedAccountId ||
+        !courierProfile.stripePayoutsEnabled
+      ) {
+        payoutOrder.courierPayoutStatus = "FAILED";
+        payoutOrder.courierPayoutFailedAt = new Date();
+        payoutOrder.courierPayoutError = "Courier Stripe Connect payouts are not enabled";
+        await manager.save(Order, payoutOrder);
+        return;
+      }
+
+      const amountCents = Number(payoutOrder.courierPayoutCents);
+
+      if (!Number.isInteger(amountCents) || amountCents <= 0) {
+        payoutOrder.courierPayoutStatus = "NOT_APPLICABLE";
+        await manager.save(Order, payoutOrder);
+        return;
+      }
+
+      try {
+        const transfer = await this.providerService.createCourierTransferForPayment({
+          localPaymentId: payment.id,
+          orderGroupId,
+          courierId: payoutOrder.courierId,
+          connectedAccountId: courierProfile.stripeConnectedAccountId,
+          providerPaymentId: payment.providerPaymentId,
+          latestChargeId: this.stringMetadataValue(payment.providerMetadata, "stripeLatestChargeId"),
+          currency: payment.currency,
+          amountCents
+        });
+
+        payoutOrder.courierPayoutStatus = "PAID";
+        payoutOrder.courierPayoutPaidAt = new Date();
+        payoutOrder.courierPayoutProviderTransferId = transfer.providerTransferId;
+        payoutOrder.courierPayoutFailedAt = null;
+        payoutOrder.courierPayoutError = null;
+        await manager.save(Order, payoutOrder);
+        this.monitoring?.recordPaymentEvent("courier_payout_paid", {
+          orderGroupId,
+          courierId: payoutOrder.courierId,
+          amountCents,
+          providerTransferId: transfer.providerTransferId
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown courier payout error";
+        payoutOrder.courierPayoutStatus = "FAILED";
+        payoutOrder.courierPayoutFailedAt = new Date();
+        payoutOrder.courierPayoutError = message;
+        await manager.save(Order, payoutOrder);
+        this.monitoring?.recordPaymentEvent("courier_payout_failed", {
+          orderGroupId,
+          courierId: payoutOrder.courierId,
+          amountCents,
+          error: message
+        });
+        throw error;
+      }
+    });
   }
 
   private assertValidWebhookSignature(
     signature: string | undefined,
     rawBody: Buffer | undefined,
-    body: PaymentWebhookDto,
-    requestId?: string
+    body: PaymentWebhookDto
   ): void {
     const stripeSecret = process.env.STRIPE_WEBHOOK_SECRET;
     const fallbackSecret = process.env.PAYMENT_WEBHOOK_SECRET;
-    const mercadoPagoSecret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
-    const secret = stripeSecret ?? fallbackSecret ?? mercadoPagoSecret;
+    const secret = stripeSecret ?? fallbackSecret;
 
     if (!secret) {
       throw new UnauthorizedException("Payment webhook secret is not configured");
@@ -371,13 +545,9 @@ export class PaymentsService {
     }
 
     const received = this.signaturePart(signature, "v1") ?? signature.replace(/^sha256=/, "");
-    const signatureTimestamp = this.signaturePart(signature, "t") ?? this.signaturePart(signature, "ts");
+    const signatureTimestamp = this.signaturePart(signature, "t");
     const payload = stripeSecret && this.signaturePart(signature, "t")
       ? Buffer.from(`${signatureTimestamp}.${rawBody?.toString("utf8") ?? JSON.stringify(body)}`)
-      : signatureTimestamp && requestId
-      ? Buffer.from(
-        `id:${this.providerPaymentIdFromWebhook(body)};request-id:${requestId};ts:${signatureTimestamp};`
-      )
       : rawBody ?? Buffer.from(JSON.stringify(body));
     const expected = createHmac("sha256", secret).update(payload).digest("hex");
 
@@ -444,6 +614,11 @@ export class PaymentsService {
     return typeof value === "string" ? value : undefined;
   }
 
+  private stringMetadataValue(metadata: Record<string, unknown> | null | undefined, key: string): string | undefined {
+    const value = metadata?.[key];
+    return typeof value === "string" ? value : undefined;
+  }
+
   private async buildStripeConnectSplits(
     businessOrders: Array<{ businessId: string; subtotalCents: number }>
   ): Promise<PaymentSplit[]> {
@@ -453,12 +628,17 @@ export class PaymentsService {
     });
     const businessesById = new Map(businesses.map((business) => [business.id, business]));
     const platformFeeBps = this.platformFeeBasisPoints();
+    const platformAccountId = await this.providerService.getPlatformAccountId();
 
     return businessOrders.map((businessOrder) => {
       const business = businessesById.get(businessOrder.businessId);
 
       if (!business?.stripeConnectedAccountId || !business.stripeChargesEnabled) {
         throw new ConflictException(`Business ${businessOrder.businessId} is not ready for Stripe Connect card payments`);
+      }
+
+      if (!business.stripePlatformAccountId || business.stripePlatformAccountId !== platformAccountId) {
+        throw new ConflictException(`Business ${businessOrder.businessId} must reconnect Stripe Connect before card payments`);
       }
 
       const grossAmountCents = Number(businessOrder.subtotalCents);

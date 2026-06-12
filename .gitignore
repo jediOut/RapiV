@@ -41,11 +41,8 @@ uploads/
 tmp/
 temp/
 
-# Terraform local state and secrets
-**/.terraform/
-**/.terraform.lock.hcl
-**/terraform.tfstate
-**/terraform.tfstate.*
-**/terraform.tfvars
-**/*.tfplan
-!**/terraform.tfvars.example
+# Local deployment state
+deploy/staging.env
+infra/staging-lite/.terraform/
+infra/staging-lite/terraform.tfvars
+infra/staging-lite/terraform.tfstate*

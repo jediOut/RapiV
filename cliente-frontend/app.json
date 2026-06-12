@@ -4,6 +4,10 @@
     "slug": "rapiv-client",
     "version": "1.0.0",
     "orientation": "portrait",
+    "scheme": [
+      "rapiv",
+      "com.rapiv.client"
+    ],
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "splash": {
@@ -11,23 +15,45 @@
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
-      "supportsTabletMode": true,
+      "supportsTablet": true,
+      "bundleIdentifier": "com.rapiv.client",
+      "buildNumber": "1",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "RapiV usa tu ubicacion durante la entrega para que el repartidor pueda llegar contigo."
+        "NSLocationWhenInUseUsageDescription": "RapiV usa tu ubicacion durante la entrega para que el repartidor pueda llegar contigo.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
-      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "POST_NOTIFICATIONS"],
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "POST_NOTIFICATIONS",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
-      }
+        "backgroundColor": "#2563EB"
+      },
+      "package": "com.rapiv.client",
+      "versionCode": 1
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "plugins": ["expo-location", "expo-notifications"]
+    "plugins": [
+      "expo-location",
+      "expo-notifications",
+      "expo-web-browser"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "2eec15c9-cc27-4740-8440-9cab74dff69f"
+      }
+    }
   }
 }

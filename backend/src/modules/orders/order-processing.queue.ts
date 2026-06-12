@@ -23,6 +23,10 @@ export type OrderLifecycleJob =
   | {
       type: "DELIVERY_OFFER_TIMEOUT";
       orderGroupId: string;
+    }
+  | {
+      type: "COURIER_DELIVERY_TIMEOUT";
+      orderGroupId: string;
     };
 
 @Injectable()
@@ -69,7 +73,7 @@ export class OrderProcessingQueue implements OnModuleDestroy {
     await this.addLifecycleJob(
       "business-acceptance-timeout",
       { type: "BUSINESS_ACCEPTANCE_TIMEOUT", orderGroupId, businessOrderId },
-      `${orderGroupId}:${businessOrderId}:business-acceptance-timeout`,
+      this.lifecycleJobId(orderGroupId, businessOrderId, "business-acceptance-timeout"),
       delayMs
     );
   }
@@ -82,7 +86,7 @@ export class OrderProcessingQueue implements OnModuleDestroy {
     await this.addLifecycleJob(
       "business-ready-timeout",
       { type: "BUSINESS_READY_TIMEOUT", orderGroupId, businessOrderId },
-      `${orderGroupId}:${businessOrderId}:business-ready-timeout`,
+      this.lifecycleJobId(orderGroupId, businessOrderId, "business-ready-timeout"),
       delayMs
     );
   }
@@ -94,7 +98,19 @@ export class OrderProcessingQueue implements OnModuleDestroy {
     await this.addLifecycleJob(
       "delivery-offer-timeout",
       { type: "DELIVERY_OFFER_TIMEOUT", orderGroupId },
-      `${orderGroupId}:delivery-offer-timeout`,
+      this.lifecycleJobId(orderGroupId, "delivery-offer-timeout"),
+      delayMs
+    );
+  }
+
+  async addCourierDeliveryTimeout(
+    orderGroupId: string,
+    delayMs = this.courierDeliveryTimeoutMs()
+  ): Promise<void> {
+    await this.addLifecycleJob(
+      "courier-delivery-timeout",
+      { type: "COURIER_DELIVERY_TIMEOUT", orderGroupId },
+      this.lifecycleJobId(orderGroupId, "courier-delivery-timeout"),
       delayMs
     );
   }
@@ -135,6 +151,10 @@ export class OrderProcessingQueue implements OnModuleDestroy {
     });
   }
 
+  private lifecycleJobId(...parts: string[]): string {
+    return parts.join("__");
+  }
+
   private businessAcceptanceTimeoutMs(): number {
     return this.minutesToMs(process.env.BUSINESS_ACCEPTANCE_TIMEOUT_MINUTES, 10);
   }
@@ -145,6 +165,10 @@ export class OrderProcessingQueue implements OnModuleDestroy {
 
   private deliveryOfferTimeoutMs(): number {
     return this.minutesToMs(process.env.DELIVERY_OFFER_TTL_MINUTES, 15);
+  }
+
+  private courierDeliveryTimeoutMs(): number {
+    return this.minutesToMs(process.env.COURIER_DELIVERY_TIMEOUT_MINUTES, 40);
   }
 
   private minutesToMs(value: string | undefined, fallback: number): number {

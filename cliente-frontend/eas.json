@@ -1,0 +1,48 @@
+{
+  "cli": {
+    "version": ">= 15.0.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://13-222-167-88.sslip.io/api",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "598103283333-vqpi00datq8ni8972g7shngjb06gk6ts.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "598103283333-0fdhf7351lhvaso1fssl6jng5bemsf94.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "598103283333-uanp9fg2c0af3db25ervdf0ld9lj3mg8.apps.googleusercontent.com"
+      }
+    },
+    "google-play-test": {
+      "distribution": "store",
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://13-222-167-88.sslip.io/api",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "598103283333-vqpi00datq8ni8972g7shngjb06gk6ts.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID": "598103283333-0fdhf7351lhvaso1fssl6jng5bemsf94.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "598103283333-uanp9fg2c0af3db25ervdf0ld9lj3mg8.apps.googleusercontent.com"
+      }
+    },
+    "production": {
+      "distribution": "store",
+      "android": {
+        "buildType": "app-bundle"
+      }
+    }
+  },
+  "submit": {
+    "google-play-test": {
+      "android": {
+        "track": "internal"
+      }
+    },
+    "production": {
+      "android": {
+        "track": "production"
+      }
+    }
+  }
+}

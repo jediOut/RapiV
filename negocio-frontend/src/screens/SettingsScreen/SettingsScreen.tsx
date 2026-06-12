@@ -18,12 +18,14 @@ import * as Location from "expo-location";
 import * as ImagePicker from "expo-image-picker";
 
 import { colors } from "../../theme/colors";
+import { VEGA_MAP_LIMITS, clampToVegaBounds, regionInVega } from "../../config/mapBounds";
 import { styles } from "./SettingsScreen.styles";
 import {
   DEFAULT_COORDINATES,
   type Coordinates,
   isInsideServiceArea
 } from "./SettingsScreen.logic";
+import type { BusinessCommissionSettlement } from "../../types/business";
 
 type BusinessProfile = {
   id?: string;
@@ -37,7 +39,6 @@ type BusinessProfile = {
   stripePayoutsEnabled?: boolean;
   stripeDetailsSubmitted?: boolean;
   stripeRequirementsCurrentlyDue?: string[] | null;
-  minimumOrderItems?: number;
   alertsEnabled?: boolean;
   coordinates?: Coordinates;
 };
@@ -48,13 +49,13 @@ type UpdateBusinessPayload = {
   address: string;
   acceptsCash: boolean;
   acceptsCard: boolean;
-  minimumOrderItems: number;
   alertsEnabled: boolean;
   coordinates: Coordinates;
 };
 
 type SettingsScreenProps = {
   businessProfile: BusinessProfile;
+  businessCommissionSettlements: BusinessCommissionSettlement[];
   isLoading: boolean;
   onUploadLogo: (imageAsset: ImagePicker.ImagePickerAsset) => void;
   onSave: (
@@ -66,6 +67,7 @@ type SettingsScreenProps = {
 
 export function SettingsScreen({
   businessProfile,
+  businessCommissionSettlements,
   isLoading,
   onUploadLogo,
   onSave,
@@ -97,10 +99,6 @@ export function SettingsScreen({
         businessProfile.stripeChargesEnabled
     )
   );
-  const [minimumOrderItems, setMinimumOrderItems] = useState(
-    String(businessProfile.minimumOrderItems ?? 1)
-  );
-
   const [alertsEnabled, setAlertsEnabled] =
     useState(
       businessProfile.alertsEnabled ?? true
@@ -132,7 +130,6 @@ export function SettingsScreen({
           businessProfile.stripeChargesEnabled
       )
     );
-    setMinimumOrderItems(String(businessProfile.minimumOrderItems ?? 1));
     setAlertsEnabled(businessProfile.alertsEnabled ?? true);
     setCoordinates(nextCoordinates);
     setMarkerPosition(nextCoordinates);
@@ -144,7 +141,6 @@ export function SettingsScreen({
     businessProfile.acceptsCard,
     businessProfile.stripeConnectedAccountId,
     businessProfile.stripeChargesEnabled,
-    businessProfile.minimumOrderItems,
     businessProfile.alertsEnabled,
     businessProfile.coordinates?.latitude,
     businessProfile.coordinates?.longitude
@@ -164,6 +160,18 @@ export function SettingsScreen({
   const stripeStatusDescription = stripeReady
     ? "Puedes activar tarjeta como metodo de pago."
     : "Completa Stripe Connect para activar pagos con tarjeta. Los datos bancarios se capturan directamente en Stripe.";
+  const pendingCommissionSettlements = businessCommissionSettlements.filter(
+    (settlement) => settlement.status === "PENDING"
+  );
+  const pendingCommissionCents = pendingCommissionSettlements.reduce(
+    (total, settlement) => total + Number(settlement.rapivCommissionCents ?? 0),
+    0
+  );
+  const latestPendingSettlement = pendingCommissionSettlements[0];
+
+  function formatMoney(cents: number) {
+    return `$${(Number(cents ?? 0) / 100).toFixed(2)}`;
+  }
 
   async function resolveAddress(
     latitude: number,
@@ -239,14 +247,7 @@ export function SettingsScreen({
               );
 
               mapRef.current?.animateToRegion(
-                {
-                  latitude:
-                    markerPosition.latitude,
-                  longitude:
-                    markerPosition.longitude,
-                  latitudeDelta: 0.01,
-                  longitudeDelta: 0.01
-                },
+                regionInVega(markerPosition, 0.01),
                 600
               );
             }
@@ -307,12 +308,12 @@ export function SettingsScreen({
           {}
         );
 
-      const nextCoordinates = {
+      const nextCoordinates = clampToVegaBounds({
         latitude:
           location.coords.latitude,
         longitude:
           location.coords.longitude
-      };
+      });
 
       setMarkerPosition(
         nextCoordinates
@@ -323,14 +324,7 @@ export function SettingsScreen({
       );
 
       mapRef.current?.animateToRegion(
-        {
-          latitude:
-            nextCoordinates.latitude,
-          longitude:
-            nextCoordinates.longitude,
-          latitudeDelta: 0.01,
-          longitudeDelta: 0.01
-        },
+        regionInVega(nextCoordinates, 0.01),
         600
       );
     } catch {
@@ -344,10 +338,10 @@ export function SettingsScreen({
   function handleRegionChangeComplete(
     region: Region
   ) {
-    setMarkerPosition({
+    setMarkerPosition(clampToVegaBounds({
       latitude: region.latitude,
       longitude: region.longitude
-    });
+    }));
   }
 
   function handleSave() {
@@ -359,8 +353,6 @@ export function SettingsScreen({
 
       return;
     }
-
-    const minimumItems = Math.max(1, Math.floor(Number(minimumOrderItems)));
 
     if (acceptsCard && !stripeReady) {
       Alert.alert(
@@ -381,7 +373,6 @@ export function SettingsScreen({
       address: address.trim(),
       acceptsCash,
       acceptsCard,
-      minimumOrderItems: Number.isFinite(minimumItems) ? minimumItems : 1,
       alertsEnabled,
       coordinates
     });
@@ -540,19 +531,26 @@ export function SettingsScreen({
         </View>
       </View>
 
-      <View style={styles.field}>
-        <Text style={styles.label}>
-          Minimo de productos por pedido
+      <View style={styles.commissionPanel}>
+        <View style={styles.commissionHeader}>
+          <Text style={styles.commissionTitle}>
+            Comisiones RapiV
+          </Text>
+          <Text style={[
+            styles.commissionStatus,
+            pendingCommissionCents > 0 && styles.commissionStatusPending
+          ]}>
+            {pendingCommissionCents > 0 ? "Pendiente" : "Al corriente"}
+          </Text>
+        </View>
+        <Text style={styles.commissionAmount}>
+          {formatMoney(pendingCommissionCents)}
         </Text>
-
-        <TextInput
-          value={minimumOrderItems}
-          onChangeText={setMinimumOrderItems}
-          keyboardType="number-pad"
-          placeholder="1"
-          placeholderTextColor={colors.textMuted}
-          style={styles.input}
-        />
+        <Text style={styles.commissionDescription}>
+          {pendingCommissionCents > 0
+            ? `Corte semanal ${latestPendingSettlement?.settlementWeek ?? ""}. RapiV confirmara cuando reciba el pago.`
+            : "No tienes comisiones pendientes por pedidos de recoger pagados en efectivo."}
+        </Text>
       </View>
 
       <View style={styles.switchContainer}>
@@ -624,17 +622,12 @@ export function SettingsScreen({
         <MapView
           ref={mapRef}
           style={styles.map}
+          maxZoomLevel={VEGA_MAP_LIMITS.maxZoomLevel}
+          minZoomLevel={VEGA_MAP_LIMITS.minZoomLevel}
           onRegionChangeComplete={
             handleRegionChangeComplete
           }
-          initialRegion={{
-            latitude:
-              coordinates.latitude,
-            longitude:
-              coordinates.longitude,
-            latitudeDelta: 0.02,
-            longitudeDelta: 0.02
-          }}
+          initialRegion={regionInVega(coordinates)}
         />
 
         <View
