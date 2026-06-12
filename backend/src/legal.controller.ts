@@ -178,4 +178,134 @@ export class LegalController {
 </body>
 </html>`;
   }
+
+  @Public()
+  @Get("eliminacion-cuenta-cliente")
+  @Header("Content-Type", "text/html; charset=utf-8")
+  customerAccountDeletion() {
+    const contactEmail = legalContactEmail();
+
+    return `<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Eliminacion de cuenta - RapiV Cliente</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Arial, Helvetica, sans-serif;
+      line-height: 1.55;
+      color: #111827;
+      background: #f8fafc;
+    }
+    body {
+      margin: 0;
+      padding: 32px 16px;
+    }
+    main {
+      max-width: 860px;
+      margin: 0 auto;
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 28px;
+    }
+    h1 {
+      margin: 0 0 6px;
+      font-size: 30px;
+      line-height: 1.2;
+    }
+    h2 {
+      margin-top: 28px;
+      font-size: 20px;
+    }
+    p, li {
+      font-size: 15px;
+    }
+    .meta {
+      color: #4b5563;
+      margin-top: 0;
+    }
+    a {
+      color: #2563eb;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Eliminacion de cuenta - RapiV Cliente</h1>
+    <p class="meta">Fecha de entrada en vigor: ${effectiveDate}</p>
+
+    <p>
+      Esta pagina explica como los usuarios de RapiV Cliente pueden solicitar la eliminacion de su cuenta
+      y de los datos asociados. RapiV Cliente es una aplicacion de RapiV para realizar pedidos a negocios locales
+      y consultar entregas dentro de la zona de servicio.
+    </p>
+
+    <h2>1. Como solicitar la eliminacion</h2>
+    <p>Para solicitar la eliminacion de tu cuenta de RapiV Cliente, sigue estos pasos:</p>
+    <ol>
+      <li>Envia un correo a <a href="mailto:${htmlEscape(contactEmail)}">${htmlEscape(contactEmail)}</a>.</li>
+      <li>Usa el asunto: "Eliminar cuenta RapiV Cliente".</li>
+      <li>Escribe el correo de Google usado para iniciar sesion en la app.</li>
+      <li>Incluye tu nombre y telefono registrados, si los agregaste a tu perfil.</li>
+      <li>Indica claramente que solicitas eliminar tu cuenta y los datos asociados a RapiV Cliente.</li>
+    </ol>
+    <p>
+      Para proteger tu cuenta, podemos pedirte verificar la solicitud respondiendo desde el mismo correo asociado
+      a tu cuenta o proporcionando informacion suficiente para confirmar tu identidad.
+    </p>
+
+    <h2>2. Datos que se eliminan</h2>
+    <p>Cuando se aprueba la solicitud, eliminamos o desactivamos datos asociados directamente a la cuenta, incluyendo:</p>
+    <ul>
+      <li>Datos de perfil de cliente, como nombre, correo electronico, telefono e identificador de usuario.</li>
+      <li>Tokens de notificaciones push asociados a la app.</li>
+      <li>Direcciones o ubicaciones guardadas para entregas futuras, cuando no deban conservarse por motivos operativos o legales.</li>
+      <li>Sesiones activas y datos usados para mantener la cuenta iniciada.</li>
+      <li>Calificaciones o comentarios asociados al usuario, cuando puedan eliminarse sin afectar registros operativos necesarios.</li>
+    </ul>
+
+    <h2>3. Datos que pueden conservarse</h2>
+    <p>
+      Algunos datos pueden conservarse despues de eliminar la cuenta cuando sean necesarios para cumplir obligaciones legales,
+      fiscales, contables, antifraude, de seguridad, soporte, reembolsos, resolucion de disputas o registros operativos.
+      Esto puede incluir:
+    </p>
+    <ul>
+      <li>Historial de pedidos, montos, estado del pedido y referencias necesarias para conciliacion o soporte.</li>
+      <li>Identificadores de pago, reembolso o transaccion procesados por proveedores externos.</li>
+      <li>Registros de seguridad, auditoria, errores o prevencion de fraude.</li>
+      <li>Comunicaciones de soporte relacionadas con la solicitud o con pedidos previos.</li>
+    </ul>
+    <p>
+      Estos datos se conservaran solo durante el tiempo necesario para los fines anteriores o durante el periodo requerido
+      por la legislacion aplicable. Como referencia operativa, los registros de pedidos, pagos y soporte pueden conservarse
+      hasta por 5 anos, salvo que una ley exija o permita un periodo diferente.
+    </p>
+
+    <h2>4. Plazos de atencion</h2>
+    <p>
+      RapiV buscara confirmar la recepcion de la solicitud dentro de 7 dias naturales y completar la eliminacion dentro
+      de 30 dias naturales despues de verificar la identidad del solicitante, salvo que exista una obligacion legal,
+      tecnica u operativa que requiera mas tiempo.
+    </p>
+
+    <h2>5. Eliminacion desde Google</h2>
+    <p>
+      Si usaste Google para iniciar sesion, tambien puedes revisar los permisos otorgados a RapiV desde tu cuenta de Google.
+      Revocar el acceso en Google no elimina automaticamente tu cuenta de RapiV Cliente; para eliminarla debes enviar la
+      solicitud descrita en esta pagina.
+    </p>
+
+    <h2>6. Contacto</h2>
+    <p>
+      Para dudas sobre eliminacion de cuenta o privacidad, escribe a
+      <a href="mailto:${htmlEscape(contactEmail)}">${htmlEscape(contactEmail)}</a>.
+    </p>
+  </main>
+</body>
+</html>`;
+  }
 }
