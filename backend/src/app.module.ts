@@ -14,6 +14,7 @@ import { UsersModule } from "./modules/users/users.module";
 import { NotificationsModule } from "./modules/notifications/notifications.module";
 import { PaymentsModule } from "./modules/payments/payments.module";
 import { HealthController } from "./health.controller";
+import { LegalController } from "./legal.controller";
 import { MediaModule } from "./modules/media/media.module";
 import { MonitoringModule } from "./modules/monitoring/monitoring.module";
 import { RatingsModule } from "./modules/ratings/ratings.module";
@@ -48,6 +49,6 @@ import { RatingsModule } from "./modules/ratings/ratings.module";
       useClass: RolesGuard
     }
   ],
-  controllers: [HealthController]
+  controllers: [HealthController, LegalController]
 })
 export class AppModule {}
