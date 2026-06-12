@@ -12,7 +12,6 @@ import {
 } from 'react-native';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
-import MapView, { Marker } from 'react-native-maps';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -35,8 +34,6 @@ import { authApi } from '../../services/authApi';
 import { Order } from '../../types/business';
 import type { CourierStripeConnectProfile, User } from '../../types/auth';
 import { colors } from '../../theme/colors';
-import { VEGA_SERVICE_address } from '../../config/serviceZone';
-import { VEGA_MAP_LIMITS, clampToVegaBounds, regionInVega } from '../../config/mapBounds';
 import { StateView } from '../../components/StateView';
 import { styles } from "./HomeScreen.styles";
 import {
@@ -214,36 +211,42 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
     let subscription: Location.LocationSubscription | null = null;
 
     async function startTracking() {
-      const token = await getToken();
-      if (!token) {
-        return;
-      }
-
-      const permission = await Location.requestForegroundPermissionsAsync();
-      if (permission.status !== 'granted') {
-        setError('Permite la ubicacion para compartirla con el cliente durante la entrega');
-        return;
-      }
-
-      subscription = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.Balanced,
-          distanceInterval: 20,
-          timeInterval: 8000,
-        },
-        (position) => {
-          void updateCourierLocation(token, activeOrderId, {
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-          }).then(async () => {
-            const nextLocation = await fetchDeliveryLocation(token, activeOrderId);
-            setDeliveryLocations((current) => ({
-              ...current,
-              [activeOrderId]: nextLocation,
-            }));
-          });
+      try {
+        const token = await getToken();
+        if (!token) {
+          return;
         }
-      );
+
+        const permission = await Location.requestForegroundPermissionsAsync();
+        if (permission.status !== 'granted') {
+          setError('Permite la ubicacion para compartirla con el cliente durante la entrega');
+          return;
+        }
+
+        subscription = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.Balanced,
+            distanceInterval: 20,
+            timeInterval: 8000,
+          },
+          (position) => {
+            void updateCourierLocation(token, activeOrderId, {
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+            }).then(async () => {
+              const nextLocation = await fetchDeliveryLocation(token, activeOrderId);
+              setDeliveryLocations((current) => ({
+                ...current,
+                [activeOrderId]: nextLocation,
+              }));
+            }).catch(() => {
+              // Keep tracking alive even if a transient location sync fails.
+            });
+          }
+        );
+      } catch {
+        setError('No se pudo iniciar el seguimiento de ubicacion.');
+      }
     }
 
     void startTracking();
@@ -426,7 +429,6 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
     const flowCopy = getOrderFlowCopy(item);
     const location = deliveryLocations[item.id];
     const customerLocation = location?.customer ?? undefined;
-    const courierLocation = location?.courier ?? undefined;
     const businessLocation = getPickupPoint(item);
     const routeDestination = getRouteDestination(item, businessLocation, customerLocation);
     const hasCollectableBusinessOrder = businessOrders.some((order) => ['ASSIGNED', 'READY'].includes(order.status));
@@ -604,61 +606,6 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
         ) : (
           <Text style={styles.orderItem}>Productos no disponibles en este momento</Text>
         )}
-
-        {item.listMode === 'assigned' && location ? (
-          <MapView
-            initialRegion={VEGA_SERVICE_address}
-            maxZoomLevel={VEGA_MAP_LIMITS.maxZoomLevel}
-            minZoomLevel={VEGA_MAP_LIMITS.minZoomLevel}
-            pitchEnabled={false}
-            region={regionInVega({
-              latitude: customerLocation?.latitude ?? courierLocation?.latitude ?? VEGA_SERVICE_address.latitude,
-              longitude: customerLocation?.longitude ?? courierLocation?.longitude ?? VEGA_SERVICE_address.longitude,
-            })}
-            rotateEnabled={false}
-            scrollEnabled={false}
-            style={styles.map}
-            zoomEnabled={false}
-          >
-            {isMultiBusinessOrder ? (
-              businessOrders.map((businessOrder, index) => {
-                const point = getBusinessOrderPoint(businessOrder);
-
-                if (!point) {
-                  return null;
-                }
-
-                return (
-                  <Marker
-                    key={businessOrder.id}
-                    coordinate={clampToVegaBounds(point)}
-                    title={`Comercio ${index + 1}`}
-                    description={`${formatStatus(businessOrder.status)} - ${businessOrder.businessAddress ?? ''}`}
-                    pinColor={businessOrder.status === 'PICKED_UP' ? 'gray' : 'orange'}
-                  />
-                );
-              })
-            ) : businessLocation ? (
-              <Marker
-                coordinate={clampToVegaBounds(businessLocation)}
-                title="Recoger en comercio"
-                description={getPickupAddress(item)}
-                pinColor="orange"
-              />
-            ) : null}
-            {customerLocation ? (
-              <Marker
-                coordinate={clampToVegaBounds(customerLocation)}
-                title="Entregar al cliente"
-                description={item.deliveryAddress}
-                pinColor="green"
-              />
-            ) : null}
-            {courierLocation ? (
-              <Marker coordinate={clampToVegaBounds(courierLocation)} title="Tu ubicacion" pinColor={colors.primary} />
-            ) : null}
-          </MapView>
-        ) : null}
 
         {item.listMode === 'assigned' && routeDestination ? (
           <TouchableOpacity

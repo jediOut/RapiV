@@ -35,7 +35,7 @@ export function HomeScreen({
         <Switch
           onValueChange={setIsOpen}
           thumbColor={isOpen ? colors.primary : colors.muted}
-          trackColor={{ false: colors.disabled, true: "#5EEAD4" }}
+          trackColor={{ false: colors.disabled, true: colors.primaryBorder }}
           value={isOpen}
         />
       </View>

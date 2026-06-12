@@ -104,6 +104,20 @@ EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID=
 EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID=
 ```
 
+## Google Maps reminder
+
+Before building `repartidor-frontend` for Google Play, create a Google Maps API key in Google Cloud:
+
+1. Enable **Maps SDK for Android** in the same Google Cloud project.
+2. Restrict the key to Android apps.
+3. Add package name `com.rapiv.courier`.
+4. Add the Play App Signing SHA-1 from Play Console > App integrity > App signing key certificate.
+5. Set the key before running EAS:
+
+```powershell
+$env:GOOGLE_MAPS_ANDROID_API_KEY="your-restricted-maps-key"
+```
+
 Also add every Google OAuth client ID to staging backend:
 
 ```text

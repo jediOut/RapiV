@@ -1,4 +1,5 @@
 import { apiRequest } from "./apiClient";
+import { CURRENT_TERMS_VERSION } from "../config/legal";
 import type {
   AuthSession,
   AuthUser,
@@ -25,7 +26,13 @@ export async function loginBusinessUser(payload: LoginPayload): Promise<AuthSess
 export async function loginBusinessUserWithGoogle(idToken: string): Promise<AuthSession> {
   return apiRequest<AuthSession>("/auth/google", {
     method: "POST",
-    body: { idToken, role: "BUSINESS_OWNER" }
+    body: {
+      idToken,
+      role: "BUSINESS_OWNER",
+      termsAccepted: true,
+      termsVersion: CURRENT_TERMS_VERSION,
+      termsApp: "negocio"
+    }
   });
 }
 
@@ -41,7 +48,10 @@ export async function registerBusinessUser(
       username,
       email: payload.email.toLowerCase().trim(),
       password: payload.password,
-      role: "BUSINESS_OWNER"
+      role: "BUSINESS_OWNER",
+      termsAccepted: payload.termsAccepted,
+      termsVersion: payload.termsVersion,
+      termsApp: payload.termsApp
     }
   });
 

@@ -3,6 +3,7 @@ import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AuthTextField } from '../../components/AuthTextField';
 import { PrimaryButton } from '../../components/PrimaryButton';
+import { CURRENT_TERMS_VERSION } from '../../config/legal';
 import { colors } from '../../theme/colors';
 import type { RegisterPayload } from '../../types/auth';
 
@@ -20,6 +21,7 @@ export default function RegisterScreen({ error, isLoading, onRegister, onBackToL
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
   const validateForm = (): boolean => {
@@ -53,6 +55,11 @@ export default function RegisterScreen({ error, isLoading, onRegister, onBackToL
       return false;
     }
 
+    if (!acceptedTerms) {
+      setFormError('Debes aceptar los terminos y condiciones para crear tu cuenta.');
+      return false;
+    }
+
     setFormError(null);
     return true;
   };
@@ -70,6 +77,9 @@ export default function RegisterScreen({ error, isLoading, onRegister, onBackToL
       password,
       phone: phone.trim() || undefined,
       username: username.length >= 3 ? username : `${username || 'usuario'}${Date.now()}`,
+      termsAccepted: true,
+      termsVersion: CURRENT_TERMS_VERSION,
+      termsApp: 'cliente',
     });
   };
 
@@ -132,6 +142,12 @@ export default function RegisterScreen({ error, isLoading, onRegister, onBackToL
           secureTextEntry
           value={confirmPassword}
         />
+        <Pressable onPress={() => setAcceptedTerms((current) => !current)} style={styles.termsRow}>
+          <View style={[styles.checkbox, acceptedTerms ? styles.checkboxChecked : null]}>
+            {acceptedTerms ? <Text style={styles.checkboxMark}>✓</Text> : null}
+          </View>
+          <Text style={styles.termsText}>Acepto los terminos y condiciones de RapiV Cliente.</Text>
+        </Pressable>
         {formError ? <Text style={styles.errorText}>{formError}</Text> : null}
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
         <PrimaryButton
@@ -203,6 +219,36 @@ const styles = StyleSheet.create({
   },
   errorText: {
     color: '#B91C1C',
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
+  termsRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  checkbox: {
+    alignItems: 'center',
+    borderColor: colors.border,
+    borderRadius: 6,
+    borderWidth: 1,
+    height: 24,
+    justifyContent: 'center',
+    width: 24,
+  },
+  checkboxChecked: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  checkboxMark: {
+    color: colors.surface,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  termsText: {
+    color: colors.textSecondary,
+    flex: 1,
     fontSize: 13,
     fontWeight: '700',
     lineHeight: 18,

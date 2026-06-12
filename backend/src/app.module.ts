@@ -18,6 +18,7 @@ import { LegalController } from "./legal.controller";
 import { MediaModule } from "./modules/media/media.module";
 import { MonitoringModule } from "./modules/monitoring/monitoring.module";
 import { RatingsModule } from "./modules/ratings/ratings.module";
+import { AdminModule } from "./modules/admin/admin.module";
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { RatingsModule } from "./modules/ratings/ratings.module";
     MediaModule,
     PaymentsModule,
     RatingsModule,
+    AdminModule,
     OrdersModule
   ],
   providers: [

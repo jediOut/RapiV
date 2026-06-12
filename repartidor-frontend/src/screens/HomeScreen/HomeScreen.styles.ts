@@ -594,7 +594,7 @@ export const styles = StyleSheet.create({
   },
   cashInput: {
     backgroundColor: colors.surface,
-    borderColor: '#F59E0B',
+    borderColor: colors.warning,
     borderRadius: 8,
     borderWidth: 1,
     color: colors.text,

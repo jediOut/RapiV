@@ -30,6 +30,9 @@ export default function LoginScreen({
           onError={onGoogleError}
           onToken={onGoogleLogin}
         />
+        <Text style={styles.termsText}>
+          Al continuar con Google aceptas los terminos y condiciones de RapiV Repartidor.
+        </Text>
       </View>
     </ScrollView>
   );
@@ -78,5 +81,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     lineHeight: 18,
+  },
+  termsText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 17,
+    textAlign: "center",
   },
 });

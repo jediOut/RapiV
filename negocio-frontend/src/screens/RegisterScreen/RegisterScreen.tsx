@@ -1,4 +1,11 @@
 import * as Location from "expo-location";
+import {
+  CURRENT_TERMS_VERSION,
+  RAPIV_BUSINESS_COMMISSION_PERCENT,
+  RAPIV_COURIER_PAYOUT_MXN,
+  RAPIV_CUSTOMER_DELIVERY_FEE_MXN,
+  RAPIV_DELIVERY_OPERATION_FEE_MXN
+} from "../../config/legal";
 import { useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -38,6 +45,7 @@ export function RegisterScreen({
   const [confirmPassword, setConfirmPassword] = useState("");
   const [coordinates, setCoordinates] = useState<Coordinates | null>(null);
   const [loadingLocation, setLoadingLocation] = useState(false);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
   async function applyCoordinates(nextCoordinates: Coordinates, shouldResolveAddress: boolean) {
@@ -161,6 +169,11 @@ export function RegisterScreen({
       return;
     }
 
+    if (!acceptedTerms) {
+      setFormError("Debes aceptar los terminos y condiciones para crear tu cuenta.");
+      return;
+    }
+
     setFormError(null);
     onRegister({
       ownerName: ownerName.trim(),
@@ -169,7 +182,10 @@ export function RegisterScreen({
       email: email.trim(),
       password,
       latitude: coordinates.latitude,
-      longitude: coordinates.longitude
+      longitude: coordinates.longitude,
+      termsAccepted: true,
+      termsVersion: CURRENT_TERMS_VERSION,
+      termsApp: "negocio"
     });
   }
 
@@ -288,6 +304,24 @@ export function RegisterScreen({
           secureTextEntry
           value={confirmPassword}
         />
+        <View style={styles.commissionNotice}>
+          <Text style={styles.commissionTitle}>Comisiones de RapiV</Text>
+          <Text style={styles.commissionText}>
+            RapiV cobra {RAPIV_BUSINESS_COMMISSION_PERCENT}% sobre cada venta realizada dentro de la app.
+          </Text>
+          <Text style={styles.commissionText}>
+            En pedidos con entrega, el envio de ${RAPIV_CUSTOMER_DELIVERY_FEE_MXN} MXN se maneja aparte: ${RAPIV_COURIER_PAYOUT_MXN} MXN son para el repartidor y ${RAPIV_DELIVERY_OPERATION_FEE_MXN} MXN son comision operativa de RapiV.
+          </Text>
+          <Text style={styles.commissionText}>
+            Estas comisiones pueden cambiar en el futuro porque estan sujetas a costos operativos.
+          </Text>
+        </View>
+        <Pressable onPress={() => setAcceptedTerms((current) => !current)} style={styles.termsRow}>
+          <View style={[styles.checkbox, acceptedTerms ? styles.checkboxChecked : null]}>
+            {acceptedTerms ? <Text style={styles.checkboxMark}>✓</Text> : null}
+          </View>
+          <Text style={styles.termsText}>Acepto los terminos y condiciones de RapiV Negocios.</Text>
+        </Pressable>
         {formError ? <Text style={styles.errorText}>{formError}</Text> : null}
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
         <PrimaryButton
@@ -391,6 +425,55 @@ const styles = StyleSheet.create({
   },
   errorText: {
     color: "#B91C1C",
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 18
+  },
+  termsRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 10
+  },
+  commissionNotice: {
+    backgroundColor: colors.secondaryLight,
+    borderColor: colors.secondaryBorder,
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 6,
+    padding: 12
+  },
+  commissionTitle: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "900"
+  },
+  commissionText: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 18
+  },
+  checkbox: {
+    alignItems: "center",
+    borderColor: colors.border,
+    borderRadius: 6,
+    borderWidth: 1,
+    height: 24,
+    justifyContent: "center",
+    width: 24
+  },
+  checkboxChecked: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary
+  },
+  checkboxMark: {
+    color: colors.surface,
+    fontSize: 16,
+    fontWeight: "900"
+  },
+  termsText: {
+    color: colors.textSecondary,
+    flex: 1,
     fontSize: 13,
     fontWeight: "700",
     lineHeight: 18

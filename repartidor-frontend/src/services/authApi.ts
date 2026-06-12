@@ -21,7 +21,13 @@ export const authApi = {
     return response;
   },
 
-  async googleLogin(payload: { idToken: string; role: 'COURIER' }): Promise<AuthResponse> {
+  async googleLogin(payload: {
+    idToken: string;
+    role: 'COURIER';
+    termsAccepted: true;
+    termsVersion: string;
+    termsApp: 'repartidor';
+  }): Promise<AuthResponse> {
     return apiRequest<AuthResponse>('/auth/google', {
       method: 'POST',
       body: payload,

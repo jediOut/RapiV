@@ -1,4 +1,8 @@
 import { ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  RAPIV_BUSINESS_COMMISSION_PERCENT,
+  RAPIV_DELIVERY_OPERATION_FEE_MXN
+} from "../../config/legal";
 
 import { GoogleSignInButton } from "../../components/GoogleSignInButton";
 import { colors } from "../../theme/colors";
@@ -31,6 +35,11 @@ export function LoginScreen({
           onError={onGoogleError}
           onToken={onGoogleLogin}
         />
+        <Text style={styles.termsText}>
+          Al continuar con Google aceptas los terminos y condiciones de RapiV Negocios.
+          RapiV cobra {RAPIV_BUSINESS_COMMISSION_PERCENT}% por venta y ${RAPIV_DELIVERY_OPERATION_FEE_MXN} MXN de comision operativa en pedidos con entrega.
+          Estas comisiones pueden cambiar por costos operativos.
+        </Text>
       </View>
     </ScrollView>
   );
@@ -79,5 +88,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
     lineHeight: 18
+  },
+  termsText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 17,
+    textAlign: "center"
   }
 });

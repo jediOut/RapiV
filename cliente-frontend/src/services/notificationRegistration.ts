@@ -25,7 +25,7 @@ export async function registerPushNotifications(app: 'cliente' | 'negocio' | 're
       name: 'Pedidos',
       importance: Notifications.AndroidImportance.HIGH,
       vibrationPattern: [0, 250, 250, 250],
-      lightColor: '#0F766E',
+      lightColor: '#2563EB',
     });
   }
 

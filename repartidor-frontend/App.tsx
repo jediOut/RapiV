@@ -12,6 +12,7 @@ import { isApiError } from './src/services/apiError';
 import { registerPushNotifications } from './src/services/notificationRegistration';
 import { sessionStorage } from './src/services/sessionStorage';
 import { colors } from './src/theme/colors';
+import { CURRENT_TERMS_VERSION } from './src/config/legal';
 import type { AuthSession } from './src/types/auth';
 import type { RootStackParamList } from './src/types/navigation';
 
@@ -75,7 +76,13 @@ export default function App() {
     setAuthError(null);
 
     try {
-      const nextSession = await authApi.googleLogin({ idToken, role: 'COURIER' });
+      const nextSession = await authApi.googleLogin({
+        idToken,
+        role: 'COURIER',
+        termsAccepted: true,
+        termsVersion: CURRENT_TERMS_VERSION,
+        termsApp: 'repartidor',
+      });
       await sessionStorage.saveSession(nextSession);
       setSession(nextSession);
     } catch (error) {

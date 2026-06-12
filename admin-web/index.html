@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RapiV Admin</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Panel administrador</p>
+          <h1>RapiV</h1>
+          <p class="hero-copy">Monitorea comisiones pendientes de negocios y repartidores.</p>
+        </div>
+        <div class="session-card" id="sessionCard">
+          <form id="loginForm" class="login-form">
+            <label>
+              API
+              <input id="apiBaseUrl" type="url" autocomplete="url" />
+            </label>
+            <label>
+              Email admin
+              <input id="email" type="email" autocomplete="email" required />
+            </label>
+            <label>
+              Password
+              <input id="password" type="password" autocomplete="current-password" required />
+            </label>
+            <button type="submit">Iniciar sesion</button>
+          </form>
+          <div id="activeSession" class="active-session hidden">
+            <div>
+              <span class="muted">Sesion activa</span>
+              <strong id="sessionUser">Admin</strong>
+            </div>
+            <button id="logoutButton" type="button" class="secondary">Salir</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="message" class="message hidden" role="status"></section>
+
+      <section id="dashboard" class="dashboard hidden">
+        <div class="toolbar">
+          <div>
+            <h2>Resumen</h2>
+            <p id="lastUpdated" class="muted">Sin actualizar</p>
+          </div>
+          <button id="refreshButton" type="button" class="secondary">Actualizar</button>
+        </div>
+
+        <section class="metrics" aria-label="Totales pendientes">
+          <article class="metric">
+            <span>Total por entregar</span>
+            <strong id="totalDue">$0.00</strong>
+          </article>
+          <article class="metric">
+            <span>Repartidores bloqueados</span>
+            <strong id="blockedCouriers">0</strong>
+          </article>
+          <article class="metric">
+            <span>Comisiones negocios</span>
+            <strong id="businessDue">$0.00</strong>
+          </article>
+          <article class="metric">
+            <span>Vencidos</span>
+            <strong id="overdueCount">0</strong>
+          </article>
+        </section>
+
+        <section class="actions">
+          <form id="dailyRunForm">
+            <h3>Corte repartidores</h3>
+            <label>
+              Fecha
+              <input id="dailyDate" type="date" required />
+            </label>
+            <button type="submit">Generar corte diario</button>
+          </form>
+          <form id="weeklyRunForm">
+            <h3>Corte negocios</h3>
+            <label>
+              Semana
+              <input id="weeklyDate" type="date" required />
+            </label>
+            <button type="submit">Generar corte semanal</button>
+          </form>
+        </section>
+
+        <section class="table-section">
+          <div class="section-title">
+            <div>
+              <h2>Repartidores con efectivo pendiente</h2>
+              <p class="muted">Estos repartidores deben entregar comision o efectivo neto a RapiV.</p>
+            </div>
+            <span id="courierCount" class="pill">0 pendientes</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Repartidor</th>
+                  <th>Fecha</th>
+                  <th>Pedidos</th>
+                  <th>Debe entregar</th>
+                  <th>Estado</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="courierRows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="table-section">
+          <div class="section-title">
+            <div>
+              <h2>Negocios con comision pendiente</h2>
+              <p class="muted">Comisiones RapiV generadas por ordenes en efectivo para recoger en negocio.</p>
+            </div>
+            <span id="businessCount" class="pill">0 pendientes</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Negocio</th>
+                  <th>Semana</th>
+                  <th>Ordenes</th>
+                  <th>Comision</th>
+                  <th>Estado</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="businessRows"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
