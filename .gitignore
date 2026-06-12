@@ -1,6 +1,7 @@
 # Environment files
 .env
 .env.*
+deploy/staging.env
 !.env.example
 !backend/.env.example
 !cliente-frontend/.env.example
