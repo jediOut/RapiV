@@ -8,10 +8,19 @@ type ProductRowProps = {
   product: Product;
   onEdit: (product: Product) => void;
   onToggle: (id: string) => void;
+  canPublishProducts?: boolean;
   disabled?: boolean;
 };
 
-export function ProductRow({ product, onEdit, onToggle, disabled = false }: ProductRowProps) {
+export function ProductRow({
+  product,
+  onEdit,
+  onToggle,
+  canPublishProducts = true,
+  disabled = false
+}: ProductRowProps) {
+  const needsStripeToPublish = !product.available && !canPublishProducts;
+
   return (
     <View style={styles.productRow}>
       {product.image ? (
@@ -27,7 +36,7 @@ export function ProductRow({ product, onEdit, onToggle, disabled = false }: Prod
           {product.category} - ${(product.priceCents / 100).toFixed(2)}
         </Text>
         <Text style={styles.mutedText}>
-          Minimo por pedido: {product.minimumQuantityPerOrder ?? 1}
+          Mínimo por pedido: {product.minimumQuantityPerOrder ?? 1}
         </Text>
         {product.description ? (
           <Text numberOfLines={2} style={styles.descriptionText}>
@@ -37,6 +46,11 @@ export function ProductRow({ product, onEdit, onToggle, disabled = false }: Prod
         <Text style={[styles.availabilityText, product.available ? styles.availableText : styles.pausedText]}>
           {product.available ? "Visible para clientes" : "Pausado"}
         </Text>
+        {needsStripeToPublish ? (
+          <Text style={styles.publishBlockedText}>
+            Conecta Stripe para publicar
+          </Text>
+        ) : null}
       </View>
       <Pressable
         disabled={disabled}
@@ -118,5 +132,11 @@ const styles = StyleSheet.create({
   },
   pausedText: {
     color: colors.muted
+  },
+  publishBlockedText: {
+    color: "#B45309",
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: 2
   }
 });

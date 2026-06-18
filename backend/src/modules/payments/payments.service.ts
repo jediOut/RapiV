@@ -22,6 +22,11 @@ import { PaymentProcessingQueue } from "./payment-processing.queue";
 import { Payment, PaymentStatus } from "./payment.entity";
 import { MonitoringService } from "../monitoring/monitoring.service";
 import { CourierProfile } from "../users/courier-profile.entity";
+import { CourierWalletTopUp } from "./courier-wallet-top-up.entity";
+import { CourierWalletTransaction } from "./courier-wallet-transaction.entity";
+import { CourierWalletService, CourierWalletSummary } from "./courier-wallet.service";
+import { CreateCourierWalletTopUpDto } from "./dto/create-courier-wallet-top-up.dto";
+import { CreateCourierWalletWithdrawalDto } from "./dto/create-courier-wallet-withdrawal.dto";
 
 type PaymentResponse = {
   id: string;
@@ -33,6 +38,28 @@ type PaymentResponse = {
   providerPaymentId: string;
   checkoutUrl?: string;
   clientSecret?: string;
+};
+
+type CourierWalletTopUpResponse = {
+  id: string;
+  amountCents: number;
+  currency: string;
+  status: PaymentStatus;
+  provider: string;
+  providerPaymentId: string;
+  checkoutUrl?: string;
+  clientSecret?: string;
+  paidAt?: Date | null;
+};
+
+type CourierWalletWithdrawalResponse = {
+  transactionId: string;
+  amountCents: number;
+  currency: string;
+  status: "SUCCEEDED";
+  provider: string;
+  providerTransferId: string;
+  balanceAfterCents: number;
 };
 
 @Injectable()
@@ -48,9 +75,12 @@ export class PaymentsService {
     private readonly courierProfileRepository: Repository<CourierProfile>,
     @InjectRepository(Order)
     private readonly orderRepository: Repository<Order>,
+    @InjectRepository(CourierWalletTopUp)
+    private readonly courierWalletTopUpRepository: Repository<CourierWalletTopUp>,
     private readonly dataSource: DataSource,
     private readonly ordersService: OrdersService,
     private readonly providerService: PaymentProviderService,
+    private readonly courierWalletService: CourierWalletService,
     private readonly processingQueue: PaymentProcessingQueue,
     @Optional()
     private readonly monitoring?: MonitoringService
@@ -149,6 +179,220 @@ export class PaymentsService {
     });
 
     return payments.map((payment) => this.toResponse(payment));
+  }
+
+  getCourierWallet(userId: string): Promise<CourierWalletSummary> {
+    return this.courierWalletService.getSummary(userId);
+  }
+
+  async createCourierWalletTopUp(
+    courierId: string,
+    idempotencyKey: string | undefined,
+    dto: CreateCourierWalletTopUpDto
+  ): Promise<CourierWalletTopUpResponse> {
+    const normalizedIdempotencyKey = idempotencyKey?.trim();
+
+    if (!normalizedIdempotencyKey) {
+      throw new BadRequestException("Idempotency-Key header is required");
+    }
+
+    const amountCents = Number(dto.amountCents);
+    const minimumAmountCents = this.courierWalletTopUpMinimumCents();
+
+    if (!Number.isInteger(amountCents) || amountCents < minimumAmountCents) {
+      throw new ConflictException(
+        `La recarga minima es ${(minimumAmountCents / 100).toFixed(2)} MXN`
+      );
+    }
+
+    const existing = await this.courierWalletTopUpRepository.findOne({
+      where: { courierId, idempotencyKey: normalizedIdempotencyKey }
+    });
+
+    if (existing) {
+      return this.toCourierWalletTopUpResponse(existing);
+    }
+
+    const localTopUpId = randomUUID();
+    const providerPayment = await this.providerService.createCourierWalletTopUp({
+      localTopUpId,
+      idempotencyKey: normalizedIdempotencyKey,
+      courierId,
+      amountCents,
+      currency: "MXN"
+    });
+
+    try {
+      const topUp = this.courierWalletTopUpRepository.create({
+        id: localTopUpId,
+        courierId,
+        amountCents,
+        currency: "MXN",
+        status: providerPayment.status,
+        provider: providerPayment.provider,
+        providerPaymentId: providerPayment.providerPaymentId,
+        idempotencyKey: normalizedIdempotencyKey,
+        providerMetadata: providerPayment.metadata
+      });
+
+      const saved = await this.courierWalletTopUpRepository.save(topUp);
+      this.monitoring?.recordPaymentEvent("courier_wallet_topup_created", {
+        topUpId: saved.id,
+        courierId,
+        amountCents
+      });
+      return this.toCourierWalletTopUpResponse(
+        saved,
+        providerPayment.clientSecret,
+        providerPayment.checkoutUrl
+      );
+    } catch (error) {
+      if (this.isUniqueViolation(error)) {
+        const racedTopUp = await this.courierWalletTopUpRepository.findOne({
+          where: { courierId, idempotencyKey: normalizedIdempotencyKey }
+        });
+
+        if (racedTopUp) {
+          return this.toCourierWalletTopUpResponse(racedTopUp);
+        }
+      }
+
+      throw error;
+    }
+  }
+
+  async syncCourierWalletTopUp(userId: string, topUpId: string): Promise<CourierWalletTopUpResponse> {
+    const topUp = await this.courierWalletTopUpRepository.findOne({
+      where: { id: topUpId, courierId: userId }
+    });
+
+    if (!topUp) {
+      throw new BadRequestException("Wallet top-up not found");
+    }
+
+    const providerDetails = await this.providerService.findPaymentForLocalPayment(
+      topUp.id,
+      topUp.providerPaymentId
+    );
+
+    await this.applyProviderCourierWalletTopUpDetails(topUp.id, providerDetails);
+
+    const syncedTopUp = await this.courierWalletTopUpRepository.findOne({
+      where: { id: topUpId, courierId: userId }
+    });
+
+    return this.toCourierWalletTopUpResponse(syncedTopUp ?? topUp);
+  }
+
+  async syncCourierWalletTopUpByCheckoutSession(providerPaymentId: string): Promise<CourierWalletTopUpResponse> {
+    const topUp = await this.courierWalletTopUpRepository.findOne({
+      where: {
+        provider: this.providerService.providerName,
+        providerPaymentId
+      }
+    });
+
+    if (!topUp) {
+      throw new BadRequestException("Wallet top-up not found for Stripe Checkout session");
+    }
+
+    const providerDetails = await this.providerService.getPayment(providerPaymentId);
+    await this.applyProviderCourierWalletTopUpDetails(topUp.id, providerDetails);
+
+    const syncedTopUp = await this.courierWalletTopUpRepository.findOne({
+      where: { id: topUp.id }
+    });
+
+    return this.toCourierWalletTopUpResponse(syncedTopUp ?? topUp);
+  }
+
+  async createCourierWalletWithdrawal(
+    courierId: string,
+    idempotencyKey: string | undefined,
+    dto: CreateCourierWalletWithdrawalDto
+  ): Promise<CourierWalletWithdrawalResponse> {
+    const normalizedIdempotencyKey = idempotencyKey?.trim();
+
+    if (!normalizedIdempotencyKey) {
+      throw new BadRequestException("Idempotency-Key header is required");
+    }
+
+    const amountCents = Number(dto.amountCents);
+
+    if (!Number.isInteger(amountCents) || amountCents <= 0) {
+      throw new BadRequestException("Withdrawal amount must be greater than zero");
+    }
+
+    return this.dataSource.transaction(async (manager) => {
+      const existing = await manager.findOne(CourierProfile, {
+        where: { userId: courierId },
+        lock: { mode: "pessimistic_write" }
+      });
+
+      if (!existing?.stripeConnectedAccountId || !existing.stripePayoutsEnabled) {
+        throw new ConflictException("Configura Stripe Connect antes de retirar tu depósito.");
+      }
+
+      const referenceId = normalizedIdempotencyKey;
+      const existingTransaction = await manager.findOne(CourierWalletTransaction, {
+        where: { type: "WITHDRAWAL", referenceId }
+      });
+
+      if (existingTransaction) {
+        return {
+          transactionId: existingTransaction.id,
+          amountCents: Math.abs(existingTransaction.amountCents),
+          currency: "MXN",
+          status: "SUCCEEDED",
+          provider: this.providerService.providerName,
+          providerTransferId: this.stringMetadataValue(existingTransaction.metadata, "providerTransferId") ?? "",
+          balanceAfterCents: existingTransaction.balanceAfterCents
+        };
+      }
+
+      const transaction = await this.courierWalletService.debitWithdrawal(
+        courierId,
+        amountCents,
+        referenceId,
+        manager,
+        {
+          provider: this.providerService.providerName,
+          status: "PROCESSING"
+        }
+      );
+      const transfer = await this.providerService.createCourierWalletWithdrawalTransfer({
+        courierId,
+        connectedAccountId: existing.stripeConnectedAccountId,
+        amountCents,
+        currency: "MXN",
+        idempotencyKey: `courier-wallet-withdrawal-${courierId}-${normalizedIdempotencyKey}`
+      });
+
+      transaction.metadata = {
+        ...(transaction.metadata ?? {}),
+        status: "SUCCEEDED",
+        provider: this.providerService.providerName,
+        providerTransferId: transfer.providerTransferId,
+        connectedAccountId: transfer.connectedAccountId
+      };
+      await manager.save(CourierWalletTransaction, transaction);
+
+      this.monitoring?.recordPaymentEvent("courier_wallet_withdrawal_created", {
+        courierId,
+        amountCents,
+        providerTransferId: transfer.providerTransferId
+      });
+
+      return {
+        transactionId: transaction.id,
+        amountCents,
+        currency: "MXN",
+        status: "SUCCEEDED",
+        provider: this.providerService.providerName,
+        providerTransferId: transfer.providerTransferId,
+        balanceAfterCents: transaction.balanceAfterCents
+      };
+    });
   }
 
   async syncPayment(userId: string, paymentId: string): Promise<PaymentResponse> {
@@ -257,7 +501,23 @@ export class PaymentsService {
         throw new BadRequestException("Missing local payment reference");
       }
 
-      await this.applyProviderPaymentDetails(providerDetails.externalReference, providerDetails);
+      const localPayment = await this.paymentRepository.findOne({
+        where: { id: providerDetails.externalReference }
+      });
+
+      if (localPayment) {
+        await this.applyProviderPaymentDetails(providerDetails.externalReference, providerDetails);
+      } else {
+        const localTopUp = await this.courierWalletTopUpRepository.findOne({
+          where: { id: providerDetails.externalReference }
+        });
+
+        if (!localTopUp) {
+          throw new BadRequestException("Payment event does not match a local payment or wallet top-up");
+        }
+
+        await this.applyProviderCourierWalletTopUpDetails(localTopUp.id, providerDetails);
+      }
       await this.dataSource.transaction(async (manager) => {
         event.status = "PROCESSED";
         event.processedAt = new Date();
@@ -417,6 +677,61 @@ export class PaymentsService {
       await this.ordersService.scheduleBusinessAcceptanceTimeouts(paidOrderGroupId);
       await this.processingQueue.addCourierPayout(paidOrderGroupId);
     }
+  }
+
+  private async applyProviderCourierWalletTopUpDetails(
+    topUpId: string,
+    providerDetails: {
+      providerPaymentId: string;
+      status: string;
+      amountCents?: number;
+      currency?: string;
+      latestChargeId?: string;
+    }
+  ): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      const topUp = await manager.findOne(CourierWalletTopUp, {
+        where: { id: topUpId },
+        lock: { mode: "pessimistic_write" }
+      });
+
+      if (!topUp) {
+        throw new BadRequestException("Wallet top-up not found for provider details");
+      }
+
+      const nextStatus = this.statusFromProviderStatus(providerDetails.status);
+      topUp.status = nextStatus;
+      topUp.providerPaymentId = providerDetails.providerPaymentId;
+      topUp.providerMetadata = {
+        ...(topUp.providerMetadata ?? {}),
+        stripeCheckoutSessionId: providerDetails.providerPaymentId,
+        stripeStatus: providerDetails.status,
+        stripeAmountCents: providerDetails.amountCents,
+        stripeCurrency: providerDetails.currency,
+        stripeLatestChargeId: providerDetails.latestChargeId
+      };
+
+      if (nextStatus === "SUCCEEDED" && !topUp.paidAt) {
+        topUp.paidAt = new Date();
+        await this.courierWalletService.creditTopUp(
+          topUp.courierId,
+          topUp.amountCents,
+          topUp.id,
+          manager,
+          {
+            providerPaymentId: providerDetails.providerPaymentId,
+            stripeLatestChargeId: providerDetails.latestChargeId
+          }
+        );
+      }
+
+      await manager.save(CourierWalletTopUp, topUp);
+      this.monitoring?.recordPaymentEvent("courier_wallet_topup_status_applied", {
+        topUpId,
+        courierId: topUp.courierId,
+        status: nextStatus
+      });
+    });
   }
 
   async processCourierPayout(orderGroupId: string): Promise<void> {
@@ -598,6 +913,24 @@ export class PaymentsService {
     };
   }
 
+  private toCourierWalletTopUpResponse(
+    topUp: CourierWalletTopUp,
+    clientSecret?: string,
+    checkoutUrl?: string
+  ): CourierWalletTopUpResponse {
+    return {
+      id: topUp.id,
+      amountCents: topUp.amountCents,
+      currency: topUp.currency,
+      status: topUp.status,
+      provider: topUp.provider,
+      providerPaymentId: topUp.providerPaymentId,
+      checkoutUrl: checkoutUrl ?? this.stringMetadataFromRecord(topUp.providerMetadata, "checkoutUrl"),
+      clientSecret,
+      paidAt: topUp.paidAt
+    };
+  }
+
   private providerPaymentIdFromWebhook(body: PaymentWebhookDto): string {
     return body.data?.object?.id ?? body.data?.providerPaymentId ?? body.data?.id ?? "";
   }
@@ -611,6 +944,11 @@ export class PaymentsService {
 
   private stringMetadata(payment: Payment, key: string): string | undefined {
     const value = payment.providerMetadata?.[key];
+    return typeof value === "string" ? value : undefined;
+  }
+
+  private stringMetadataFromRecord(metadata: Record<string, unknown> | null | undefined, key: string): string | undefined {
+    const value = metadata?.[key];
     return typeof value === "string" ? value : undefined;
   }
 
@@ -683,6 +1021,16 @@ export class PaymentsService {
 
     if (!Number.isInteger(configured) || configured < 0 || configured >= 10_000) {
       throw new Error("RAPIV_PLATFORM_FEE_BPS must be an integer between 0 and 9999");
+    }
+
+    return configured;
+  }
+
+  private courierWalletTopUpMinimumCents(): number {
+    const configured = Number(process.env.COURIER_WALLET_TOPUP_MINIMUM_CENTS ?? 20000);
+
+    if (!Number.isInteger(configured) || configured <= 0) {
+      throw new Error("COURIER_WALLET_TOPUP_MINIMUM_CENTS must be a positive integer");
     }
 
     return configured;

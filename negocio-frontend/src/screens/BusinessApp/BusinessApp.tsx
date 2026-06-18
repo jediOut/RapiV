@@ -174,13 +174,24 @@ export function BusinessApp({
 
   const salesTotal = useMemo(
     () =>
-      orders.reduce(
-        (sum, order) =>
-          sum +
-          order.subtotalCents / 100,
-        0
-      ),
+      orders
+        .filter((order) =>
+          order.paymentMethod !== "CASH" ||
+          order.fulfillmentMethod === "PICKUP"
+        )
+        .reduce(
+          (sum, order) =>
+            sum +
+            order.subtotalCents / 100,
+          0
+        ),
     [orders]
+  );
+
+  const canPublishProducts = Boolean(
+    selectedBusiness?.stripeConnectedAccountId &&
+      selectedBusiness.stripeChargesEnabled &&
+      selectedBusiness.stripePayoutsEnabled
   );
 
   useEffect(() => {
@@ -427,7 +438,7 @@ export function BusinessApp({
     } catch (error) {
       const message = error instanceof Error
         ? error.message
-        : "No se pudo iniciar la configuracion de Stripe";
+        : "No se pudo iniciar la configuración de Stripe";
 
       setBusinessError(message);
       Alert.alert("Stripe Connect", message);
@@ -456,7 +467,7 @@ export function BusinessApp({
         "Stripe Connect",
         updatedBusiness.stripeChargesEnabled
           ? "Tu negocio ya puede aceptar pagos con tarjeta."
-          : "Tu configuracion de Stripe aun esta pendiente."
+          : "Tu configuración de Stripe aún está pendiente."
       );
     } catch (error) {
       const message = error instanceof Error
@@ -590,6 +601,16 @@ export function BusinessApp({
       return;
     }
 
+    const nextAvailable = !product.available;
+
+    if (nextAvailable && !canPublishProducts) {
+      Alert.alert(
+        "Stripe Connect requerido",
+        "Completa Stripe Connect antes de publicar productos. Asi podremos liquidar tus pagos correctamente."
+      );
+      return;
+    }
+
     setIsMutatingProduct(true);
 
     setBusinessError(null);
@@ -600,7 +621,7 @@ export function BusinessApp({
           session.accessToken,
           selectedBusiness.id,
           product.id,
-          !product.available
+          nextAvailable
         );
 
       setProducts((current) =>
@@ -629,6 +650,14 @@ export function BusinessApp({
     imageAsset?: ImagePickerAsset
   ) {
     if (!selectedBusiness) {
+      return;
+    }
+
+    if (!canPublishProducts) {
+      Alert.alert(
+        "Stripe Connect requerido",
+        "Completa Stripe Connect antes de publicar productos. Asi podremos liquidar tus pagos correctamente."
+      );
       return;
     }
 
@@ -919,6 +948,7 @@ export function BusinessApp({
             }
             isOpen={isOpen}
             orders={orders}
+            onOpenOrders={() => setScreen("orders")}
             prepTime={prepTime}
             salesTotal={
               salesTotal
@@ -965,8 +995,18 @@ export function BusinessApp({
             onPrepTimeChange={
               setPrepTime
             }
+            onConnectStripe={
+              handleConnectStripe
+            }
+            onRefreshStripeStatus={
+              handleRefreshStripeStatus
+            }
             onToggleProduct={
               toggleProduct
+            }
+            canPublishProducts={canPublishProducts}
+            hasStripeConnectAccount={
+              Boolean(selectedBusiness?.stripeConnectedAccountId)
             }
             onUpdateProduct={
               handleUpdateProduct

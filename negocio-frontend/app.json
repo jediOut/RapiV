@@ -2,7 +2,7 @@
   "expo": {
     "name": "RapiV Negocios",
     "slug": "rapiv-business",
-    "version": "0.1.0",
+    "version": "0.1.2",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "icon": "./assets/icon.png",
@@ -21,9 +21,9 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.rapiv.business",
-      "buildNumber": "1",
+      "buildNumber": "3",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "RapiV usa tu ubicacion para registrar la ubicacion real de tu negocio."
+        "NSLocationWhenInUseUsageDescription": "RapiV usa tu ubicación para registrar la ubicación real de tu negocio."
       }
     },
     "android": {
@@ -39,7 +39,7 @@
         "backgroundColor": "#0F766E"
       },
       "package": "com.rapiv.business",
-      "versionCode": 1
+      "versionCode": 3
     },
     "web": {
       "favicon": "./assets/favicon.png"

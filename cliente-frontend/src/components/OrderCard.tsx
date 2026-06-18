@@ -78,7 +78,7 @@ export default function OrderCard({ order, onPress }: OrderCardProps) {
   return (
     <TouchableOpacity style={styles.card} onPress={onPress}>
       <View style={styles.header}>
-        <Text style={styles.orderId}>Numero de pedido {orderNumber}</Text>
+        <Text style={styles.orderId}>Número de pedido {orderNumber}</Text>
         <View
           style={[
             styles.statusBadge,

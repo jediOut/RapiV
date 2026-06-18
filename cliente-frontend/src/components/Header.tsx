@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../theme/colors';
 
 interface HeaderProps {
@@ -16,8 +17,10 @@ export default function Header({
   rightIcon,
   onRightPress,
 }: HeaderProps) {
+  const insets = useSafeAreaInsets();
+
   return (
-    <View style={styles.header}>
+    <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
       {onBackPress ? (
         <TouchableOpacity onPress={onBackPress} style={styles.iconButton}>
           <MaterialIcons name="arrow-back" size={24} color={colors.text} />

@@ -1,4 +1,6 @@
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { Image, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   RAPIV_BUSINESS_COMMISSION_PERCENT,
   RAPIV_DELIVERY_OPERATION_FEE_MXN
@@ -20,12 +22,30 @@ export function LoginScreen({
   onGoogleLogin,
   onGoogleError
 }: LoginScreenProps) {
+  const insets = useSafeAreaInsets();
+
   return (
-    <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+    <ScrollView
+      contentContainerStyle={[
+        styles.container,
+        {
+          paddingBottom: Math.max(insets.bottom + 22, 44),
+          paddingTop: Math.max(insets.top + 22, 44)
+        }
+      ]}
+      keyboardShouldPersistTaps="handled"
+    >
       <View style={styles.brandBlock}>
-        <Text style={styles.brand}>RapiV</Text>
+        <View style={styles.logoMark}>
+          <Image source={require("../../../assets/icon.png")} style={styles.logoImage} />
+        </View>
         <Text style={styles.title}>Acceso para negocios</Text>
-        <Text style={styles.subtitle}>Entra con Google para administrar pedidos, menu y perfil de tu comercio.</Text>
+        <Text style={styles.subtitle}>Administra pedidos, menú y pagos desde una sola pantalla.</Text>
+        <View style={styles.benefits}>
+          <Benefit icon="receipt-outline" label="Pedidos en tiempo real" />
+          <Benefit icon="fast-food-outline" label="Menú editable" />
+          <Benefit icon="cash-outline" label="Liquidaciones claras" />
+        </View>
       </View>
 
       <View style={styles.form}>
@@ -36,12 +56,27 @@ export function LoginScreen({
           onToken={onGoogleLogin}
         />
         <Text style={styles.termsText}>
-          Al continuar con Google aceptas los terminos y condiciones de RapiV Negocios.
-          RapiV cobra {RAPIV_BUSINESS_COMMISSION_PERCENT}% por venta y ${RAPIV_DELIVERY_OPERATION_FEE_MXN} MXN de comision operativa en pedidos con entrega.
+          Al continuar con Google aceptas los términos y condiciones de RapiV Negocios.
+          RapiV cobra {RAPIV_BUSINESS_COMMISSION_PERCENT}% por venta y ${RAPIV_DELIVERY_OPERATION_FEE_MXN} MXN de comisión operativa en pedidos con entrega.
           Estas comisiones pueden cambiar por costos operativos.
         </Text>
       </View>
     </ScrollView>
+  );
+}
+
+function Benefit({
+  icon,
+  label
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+}) {
+  return (
+    <View style={styles.benefitItem}>
+      <Ionicons name={icon} size={17} color={colors.primary} />
+      <Text style={styles.benefitText}>{label}</Text>
+    </View>
   );
 }
 
@@ -54,6 +89,19 @@ const styles = StyleSheet.create({
   },
   brandBlock: {
     marginBottom: 28
+  },
+  logoMark: {
+    alignItems: "center",
+    borderRadius: 18,
+    height: 76,
+    justifyContent: "center",
+    marginBottom: 18,
+    overflow: "hidden",
+    width: 76
+  },
+  logoImage: {
+    height: "100%",
+    width: "100%"
   },
   brand: {
     color: colors.primary,
@@ -74,6 +122,20 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
     marginTop: 8
+  },
+  benefits: {
+    gap: 10,
+    marginTop: 18
+  },
+  benefitItem: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 9
+  },
+  benefitText: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: "800"
   },
   form: {
     backgroundColor: colors.surface,

@@ -3,7 +3,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Image,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CustomerTabBar } from '../../components/CustomerTabBar';
 import { StateView } from '../../components/StateView';
@@ -82,7 +82,7 @@ export default function HomeScreen({ navigation }: Props) {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView edges={['top']} style={styles.container}>
         <StateView title="Cargando RapiV" message="Estamos preparando negocios y novedades." type="loading" />
       </SafeAreaView>
     );
@@ -90,12 +90,12 @@ export default function HomeScreen({ navigation }: Props) {
 
   if (error) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView edges={['top']} style={styles.container}>
         <StateView
           actionLabel="Reintentar"
           message={error}
           onAction={loadMarketplace}
-          title={error.includes('Sin conexion') ? 'Sin conexion' : 'No pudimos cargar el inicio'}
+          title={error.includes('Sin conexion') ? 'Sin conexión' : 'No pudimos cargar el inicio'}
           type="error"
         />
         <CustomerTabBar active="home" navigation={navigation} />
@@ -104,12 +104,15 @@ export default function HomeScreen({ navigation }: Props) {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView edges={['top']} style={styles.container}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.topBar}>
-          <View>
-            <Text style={styles.greeting}>RapiV</Text>
-            <Text style={styles.location}>Comida cerca de ti</Text>
+          <View style={styles.brandHeader}>
+            <Image source={require("../../../assets/icon.png")} style={styles.headerLogo} />
+            <View>
+              <Text style={styles.greeting}>RapiV</Text>
+              <Text style={styles.location}>Comida cerca de ti</Text>
+            </View>
           </View>
           <Pressable onPress={() => navigation.navigate('Profile')} style={styles.profileButton}>
             <MaterialIcons name="person" size={22} color={colors.primary} />
@@ -183,7 +186,7 @@ export default function HomeScreen({ navigation }: Props) {
         ) : (
           <View style={styles.inlineState}>
             <Text style={styles.inlineStateTitle}>Sin productos</Text>
-            <Text style={styles.inlineStateText}>Aun no hay productos destacados.</Text>
+            <Text style={styles.inlineStateText}>Aún no hay productos destacados.</Text>
           </View>
         )}
 
@@ -206,8 +209,16 @@ export default function HomeScreen({ navigation }: Props) {
                 <View style={styles.businessInfo}>
                   <Text numberOfLines={1} style={styles.businessName}>{business.name}</Text>
                   <Text numberOfLines={1} style={styles.businessMeta}>
-                    {business.deliveryTime ? `${business.deliveryTime} min` : 'Disponible'} · {business.isOpen === false ? 'Cerrado' : 'Abierto'}
+                    {business.deliveryTime ? `${business.deliveryTime} min` : 'Tiempo por confirmar'} · Envío según zona
                   </Text>
+                  <View style={styles.businessMetaRow}>
+                    <View style={[styles.businessBadge, business.isOpen === false ? styles.closedBadge : styles.openBadge]}>
+                      <Text style={[styles.businessBadgeText, business.isOpen === false ? styles.closedBadgeText : styles.openBadgeText]}>
+                        {business.isOpen === false ? 'Cerrado' : 'Abierto'}
+                      </Text>
+                    </View>
+                    <Text style={styles.ratingText}>? Sin valoraciones</Text>
+                  </View>
                 </View>
               </Pressable>
             ))}
@@ -259,6 +270,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 16,
+  },
+  brandHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  headerLogo: {
+    borderRadius: 8,
+    height: 44,
+    width: 44,
   },
   greeting: {
     color: colors.text,
@@ -455,6 +476,43 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     marginTop: 6,
+  },
+  businessMetaRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+  },
+  businessBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  openBadge: {
+    backgroundColor: colors.secondaryLight,
+    borderColor: colors.secondaryBorder,
+    borderWidth: 1,
+  },
+  closedBadge: {
+    backgroundColor: colors.danger,
+    borderColor: colors.danger,
+    borderWidth: 1,
+  },
+  businessBadgeText: {
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  openBadgeText: {
+    color: '#166534',
+  },
+  closedBadgeText: {
+    color: colors.dangerText,
+  },
+  ratingText: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '800',
   },
   inlineState: {
     alignItems: 'center',

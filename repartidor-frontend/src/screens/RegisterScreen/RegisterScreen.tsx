@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AuthTextField } from '../../components/AuthTextField';
 import PrimaryButton from '../../components/PrimaryButton';
@@ -58,7 +58,7 @@ export default function RegisterScreen({ error, isLoading, onRegister, onBackToL
     }
 
     if (!acceptedTerms) {
-      setFormError('Debes aceptar los terminos y condiciones para crear tu cuenta.');
+      setFormError('Debes aceptar los términos y condiciones para crear tu cuenta.');
       return false;
     }
 
@@ -95,13 +95,16 @@ export default function RegisterScreen({ error, isLoading, onRegister, onBackToL
     <ScrollView
       contentContainerStyle={[
         styles.container,
-        { paddingBottom: Math.max(insets.bottom + 32, 72) },
+        {
+          paddingBottom: Math.max(insets.bottom + 32, 72),
+          paddingTop: Math.max(insets.top + 22, 44),
+        },
       ]}
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.brandBlock}>
-        <Text style={styles.brand}>RapiV</Text>
+        <Image source={require("../../../assets/icon.png")} style={styles.logoImage} />
         <Text style={styles.title}>Registro de repartidor</Text>
         <Text style={styles.subtitle}>Únete al equipo y entrega pedidos con rapidez.</Text>
       </View>
@@ -150,7 +153,7 @@ export default function RegisterScreen({ error, isLoading, onRegister, onBackToL
           <View style={[styles.checkbox, acceptedTerms ? styles.checkboxChecked : null]}>
             {acceptedTerms ? <Text style={styles.checkboxMark}>✓</Text> : null}
           </View>
-          <Text style={styles.termsText}>Acepto los terminos y condiciones de RapiV Repartidor.</Text>
+          <Text style={styles.termsText}>Acepto los términos y condiciones de RapiV Repartidor.</Text>
         </Pressable>
         {formError ? <Text style={styles.errorText}>{formError}</Text> : null}
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -182,6 +185,12 @@ const styles = StyleSheet.create({
   },
   brandBlock: {
     marginBottom: 28,
+  },
+  logoImage: {
+    borderRadius: 18,
+    height: 76,
+    marginBottom: 18,
+    width: 76,
   },
   brand: {
     color: colors.primary,

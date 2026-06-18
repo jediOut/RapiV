@@ -13,7 +13,7 @@ export const businessTabs: TabItem[] = [
   },
   {
     key: "menu",
-    label: "Menu",
+    label: "Menú",
     icon: "restaurant-outline"
   },
   {

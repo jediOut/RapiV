@@ -38,7 +38,7 @@ class ApiClient {
       });
     } catch {
       throw new ApiError(
-        'Sin conexion. Revisa tu internet e intenta de nuevo.',
+        'Sin conexión. Revisa tu internet e intenta de nuevo.',
         0,
         'network'
       );
@@ -49,7 +49,7 @@ class ApiClient {
 
     if (!response.ok) {
       if (response.status === 401) {
-        throw new ApiError('Tu sesion expiro. Inicia sesion nuevamente.', 401, 'unauthorized');
+        throw new ApiError('Tu sesión expiró. Inicia sesión nuevamente.', 401, 'unauthorized');
       }
 
       if (response.status === 404) {

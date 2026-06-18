@@ -148,18 +148,19 @@ export function SettingsScreen({
 
   const stripeReady = Boolean(
     businessProfile.stripeConnectedAccountId &&
-      businessProfile.stripeChargesEnabled
+      businessProfile.stripeChargesEnabled &&
+      businessProfile.stripePayoutsEnabled
   );
 
   const stripeStatusLabel = stripeReady
-    ? "Listo para recibir pagos con tarjeta"
+    ? "Listo para recibir pagos"
     : businessProfile.stripeConnectedAccountId
-      ? "Configuracion pendiente en Stripe"
+      ? "Configuración pendiente en Stripe"
       : "Stripe Connect no configurado";
 
   const stripeStatusDescription = stripeReady
-    ? "Puedes activar tarjeta como metodo de pago."
-    : "Completa Stripe Connect para activar pagos con tarjeta. Los datos bancarios se capturan directamente en Stripe.";
+    ? "Puedes publicar productos y activar tarjeta como método de pago."
+    : "Completa Stripe Connect para publicar productos y recibir pagos. Los datos bancarios se capturan directamente en Stripe.";
   const pendingCommissionSettlements = businessCommissionSettlements.filter(
     (settlement) => settlement.status === "PENDING"
   );
@@ -269,7 +270,7 @@ export function SettingsScreen({
     if (!permission.granted) {
       Alert.alert(
         "Permiso denegado",
-        "Debes permitir acceso a tus imagenes."
+        "Debes permitir acceso a tus imágenes."
       );
 
       return;
@@ -348,7 +349,7 @@ export function SettingsScreen({
     if (!name.trim() || !address.trim()) {
       Alert.alert(
         "Datos incompletos",
-        "Nombre y direccion son obligatorios."
+        "Nombre y dirección son obligatorios."
       );
 
       return;
@@ -363,7 +364,7 @@ export function SettingsScreen({
     }
 
     if (!acceptsCash && !acceptsCard) {
-      Alert.alert("Metodo de pago requerido", "Activa efectivo, tarjeta o ambos.");
+      Alert.alert("Método de pago requerido", "Activa efectivo, tarjeta o ambos.");
       return;
     }
 
@@ -456,7 +457,7 @@ export function SettingsScreen({
 
       <View style={styles.field}>
         <Text style={styles.label}>
-          Metodos de pago aceptados
+          Métodos de pago aceptados
         </Text>
         <View style={styles.stripePanel}>
           <Text style={styles.stripeStatus}>
@@ -548,7 +549,7 @@ export function SettingsScreen({
         </Text>
         <Text style={styles.commissionDescription}>
           {pendingCommissionCents > 0
-            ? `Corte semanal ${latestPendingSettlement?.settlementWeek ?? ""}. RapiV confirmara cuando reciba el pago.`
+            ? `Corte semanal ${latestPendingSettlement?.settlementWeek ?? ""}. RapiV confirmará cuando reciba el pago.`
             : "No tienes comisiones pendientes por pedidos de recoger pagados en efectivo."}
         </Text>
       </View>
@@ -602,7 +603,7 @@ export function SettingsScreen({
       </View>
 
       <Text style={styles.locationSummary}>
-        {address || "Direccion del negocio no disponible"}
+        {address || "Dirección del negocio no disponible"}
       </Text>
 
       <Pressable
@@ -612,7 +613,7 @@ export function SettingsScreen({
         <Text
           style={styles.confirmButtonText}
         >
-          {showMapEditor ? "Ocultar mapa" : "Editar ubicacion en mapa"}
+          {showMapEditor ? "Ocultar mapa" : "Editar ubicación en mapa"}
         </Text>
       </Pressable>
 

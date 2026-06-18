@@ -14,6 +14,8 @@ import { Payment } from './modules/payments/payment.entity';
 import { Rating } from './modules/ratings/rating.entity';
 import { CashSettlement } from './modules/payments/cash-settlement.entity';
 import { BusinessCommissionSettlement } from './modules/payments/business-commission-settlement.entity';
+import { CourierWalletTopUp } from './modules/payments/courier-wallet-top-up.entity';
+import { CourierWalletTransaction } from './modules/payments/courier-wallet-transaction.entity';
 
 loadEnv({ path: '../.env', quiet: true });
 loadEnv({ path: '.env', override: true, quiet: true });
@@ -48,6 +50,8 @@ export const AppDataSource = new DataSource({
     DeliveryOffer,
     Payment,
     PaymentEvent,
+    CourierWalletTopUp,
+    CourierWalletTransaction,
     CashSettlement,
     BusinessCommissionSettlement,
     Rating

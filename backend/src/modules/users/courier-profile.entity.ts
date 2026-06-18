@@ -32,6 +32,9 @@ export class CourierProfile {
   @Column({ type: "int", nullable: true })
   maxDeliveryDistanceKm?: number | null;
 
+  @Column({ type: "int", default: 0 })
+  walletBalanceCents!: number;
+
   @Column({ type: "varchar", nullable: true })
   stripeConnectedAccountId?: string | null;
 

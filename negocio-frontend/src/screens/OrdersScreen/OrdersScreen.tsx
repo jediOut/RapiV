@@ -77,7 +77,7 @@ export function OrdersScreen({ error, isLoading, onConfirmCashPayout, onRetry, o
           compact
           message={error}
           onAction={onRetry}
-          title={error.includes("Sin conexion") ? "Sin conexion" : "No pudimos cargar pedidos"}
+          title={error.includes("Sin conexion") ? "Sin conexión" : "No pudimos cargar pedidos"}
           type="error"
         />
       ) : visibleOrders.length === 0 ? (
@@ -85,8 +85,8 @@ export function OrdersScreen({ error, isLoading, onConfirmCashPayout, onRetry, o
           compact
           message={
             mode === "active"
-              ? "Los pedidos nuevos apareceran aqui cuando los clientes ordenen."
-              : "Los pedidos entregados, rechazados o cancelados apareceran aqui."
+              ? "Los pedidos nuevos aparecerán aquí cuando los clientes ordenen."
+              : "Los pedidos entregados, rechazados o cancelados aparecerán aquí."
           }
           title={mode === "active" ? "No hay pedidos activos" : "No hay historial"}
         />

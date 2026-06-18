@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Image, StyleSheet, Text, View } from "react-native";
 import * as Location from "expo-location";
 import MapView, { Marker, MapPressEvent } from "react-native-maps";
 
@@ -51,7 +51,7 @@ export function BusinessProfileRequiredScreen({
     const permission = await Location.requestForegroundPermissionsAsync();
 
     if (permission.status !== "granted") {
-      setLocationError("Permite la ubicacion para usar tu posicion actual");
+      setLocationError("Permite la ubicación para usar tu posición actual");
       return;
     }
 
@@ -73,12 +73,12 @@ export function BusinessProfileRequiredScreen({
     }
 
     if (!address.trim()) {
-      setLocationError("Escribe la direccion o zona del negocio.");
+      setLocationError("Escribe la dirección o zona del negocio.");
       return;
     }
 
     if (!selectedLocation) {
-      setLocationError("Marca la ubicacion del negocio con GPS o el mapa.");
+      setLocationError("Marca la ubicación del negocio con GPS o el mapa.");
       return;
     }
 
@@ -94,13 +94,13 @@ export function BusinessProfileRequiredScreen({
   return (
     <View style={styles.container}>
       <View style={styles.panel}>
-        <Text style={styles.brand}>RapiV</Text>
+        <Image source={require("../../../assets/icon.png")} style={styles.logoImage} />
         <Text style={styles.title}>Perfil de negocio requerido</Text>
         <Text style={styles.body}>
           Para usar esta app debes registrar un negocio real asociado a esta cuenta.
         </Text>
         <Text style={styles.body}>
-          Si este no es el correo del negocio, cierra sesion e inicia sesion con la cuenta correcta.
+          Si este no es el correo del negocio, cierra sesión e inicia sesión con la cuenta correcta.
         </Text>
 
         <AuthTextField
@@ -112,7 +112,7 @@ export function BusinessProfileRequiredScreen({
         />
 
         <View style={styles.mapBlock}>
-          <Text style={styles.mapTitle}>Ubicacion dentro de Vega de Alatorre</Text>
+          <Text style={styles.mapTitle}>Ubicación dentro de Vega de Alatorre</Text>
           <MapView
             initialRegion={defaultVegaRegion()}
             maxZoomLevel={VEGA_MAP_LIMITS.maxZoomLevel}
@@ -128,7 +128,7 @@ export function BusinessProfileRequiredScreen({
             {selectedLocation ? <Marker coordinate={clampToVegaBounds(selectedLocation)} title="Mi negocio" /> : null}
           </MapView>
           {locationError ? <Text style={styles.errorText}>{locationError}</Text> : null}
-          <PrimaryButton label="Usar mi ubicacion actual" onPress={useCurrentLocation} variant="secondary" />
+          <PrimaryButton label="Usar mi ubicación actual" onPress={useCurrentLocation} variant="secondary" />
         </View>
         <AuthTextField
           icon="location-outline"
@@ -151,7 +151,7 @@ export function BusinessProfileRequiredScreen({
             label={isLoading ? "Registrando..." : "Registrar negocio"}
             onPress={handleCreateBusiness}
           />
-          <PrimaryButton label="Cerrar sesion" onPress={onLogout} variant="secondary" />
+          <PrimaryButton label="Cerrar sesión" onPress={onLogout} variant="secondary" />
         </View>
       </View>
     </View>
@@ -172,6 +172,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: 14,
     padding: 18
+  },
+  logoImage: {
+    borderRadius: 16,
+    height: 64,
+    width: 64
   },
   brand: {
     color: colors.primary,

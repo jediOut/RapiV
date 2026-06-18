@@ -1,8 +1,9 @@
-import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 
 import { BusinessesService } from "../businesses/businesses.service";
+import { Business } from "../businesses/business.entity";
 import { Product } from "./product.entity";
 import { CreateProductDto } from "./dto/create-product.dto";
 import { UpdateProductDto } from "./dto/update-product.dto";
@@ -16,7 +17,8 @@ export class ProductsService {
   ) {}
 
   async create(ownerUserId: string, businessId: string, dto: CreateProductDto): Promise<Product> {
-    await this.assertBusinessOwner(ownerUserId, businessId);
+    const business = await this.assertBusinessOwner(ownerUserId, businessId);
+    this.assertBusinessCanPublishProducts(business);
 
     const product = this.productRepository.create({
       businessId,
@@ -42,11 +44,15 @@ export class ProductsService {
   }
 
   async findAvailable(): Promise<Product[]> {
-    return this.productRepository.find({
-      where: { available: true },
-      relations: ["business"],
-      order: { createdAt: "DESC" }
-    });
+    return this.productRepository
+      .createQueryBuilder("product")
+      .leftJoinAndSelect("product.business", "business")
+      .where("product.available = :available", { available: true })
+      .andWhere("business.stripeConnectedAccountId IS NOT NULL")
+      .andWhere("business.stripeChargesEnabled = :stripeReady", { stripeReady: true })
+      .andWhere("business.stripePayoutsEnabled = :stripeReady", { stripeReady: true })
+      .orderBy("product.createdAt", "DESC")
+      .getMany();
   }
 
   async findById(productId: string): Promise<Product> {
@@ -68,12 +74,16 @@ export class ProductsService {
     productId: string,
     available: boolean
   ): Promise<Product> {
-    await this.assertBusinessOwner(ownerUserId, businessId);
+    const business = await this.assertBusinessOwner(ownerUserId, businessId);
 
     const product = await this.findById(productId);
 
     if (product.businessId !== businessId) {
       throw new NotFoundException("Product not found for business");
+    }
+
+    if (available) {
+      this.assertBusinessCanPublishProducts(business);
     }
 
     product.available = available;
@@ -121,11 +131,23 @@ export class ProductsService {
     return this.productRepository.save(product);
   }
 
-  private async assertBusinessOwner(ownerUserId: string, businessId: string): Promise<void> {
+  private async assertBusinessOwner(ownerUserId: string, businessId: string): Promise<Business> {
     const business = await this.businessesService.findById(businessId);
 
     if (business.ownerUserId !== ownerUserId) {
       throw new ForbiddenException("User does not own this business");
+    }
+
+    return business;
+  }
+
+  private assertBusinessCanPublishProducts(business: Business): void {
+    if (
+      !business.stripeConnectedAccountId ||
+      !business.stripeChargesEnabled ||
+      !business.stripePayoutsEnabled
+    ) {
+      throw new ConflictException("Configure Stripe Connect before publishing products");
     }
   }
 }

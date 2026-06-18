@@ -85,6 +85,7 @@ export type OrderGroup = {
   courierPayoutFailedAt?: string | Date | null;
   courierPayoutError?: string | null;
   platformDeliveryMarginCents: number;
+  cashSettlementRequiredCents?: number;
   totalCents: number;
   createdAt: string | Date;
   customerName?: string;

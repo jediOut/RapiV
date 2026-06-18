@@ -40,7 +40,7 @@ export default function App() {
         setSession(null);
         setAuthError(
           isApiError(error) && error.code === "unauthorized"
-            ? "Tu sesion expiro. Inicia sesion nuevamente."
+            ? "Tu sesión expiró. Inicia sesión nuevamente."
             : null
         );
       }
@@ -68,7 +68,7 @@ export default function App() {
       await saveSession(nextSession);
       setSession(nextSession);
     } catch (error) {
-      setAuthError(error instanceof Error ? error.message : "No se pudo iniciar sesion con Google");
+      setAuthError(error instanceof Error ? error.message : "No se pudo iniciar sesión con Google");
     } finally {
       setIsAuthenticating(false);
     }
@@ -83,7 +83,7 @@ export default function App() {
     return (
       <SafeAreaProvider>
         <SafeAreaView style={styles.safeArea}>
-          <StateView title="Cargando RapiV" message="Estamos restaurando tu sesion." type="loading" />
+          <StateView title="Cargando RapiV" message="Estamos restaurando tu sesión." type="loading" />
         </SafeAreaView>
       </SafeAreaProvider>
     );
@@ -95,7 +95,7 @@ export default function App() {
         <StatusBar style="dark" />
         {session && !(session.user.roles ?? []).includes("BUSINESS_OWNER") ? (
           <StateView
-            actionLabel="Cerrar sesion"
+            actionLabel="Cerrar sesión"
             message="Este correo pertenece a otra app de RapiV. Usa una cuenta de negocio para entrar aqui."
             onAction={handleLogout}
             title="Cuenta no valida"

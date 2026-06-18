@@ -77,21 +77,23 @@ const getPaymentLabel = (paymentMethod?: string, paymentStatus?: string) => {
 };
 
 const getFulfillmentLabel = (fulfillmentMethod?: BusinessOrder['fulfillmentMethod']) =>
-  fulfillmentMethod === 'PICKUP' ? 'Recoge cliente' : 'Con envio';
+  fulfillmentMethod === 'PICKUP' ? 'Recoge cliente' : 'Con envío';
 
 const getCashPayoutLabel = (
   status: BusinessOrder['businessCashPayoutStatus'] | undefined,
   fulfillmentMethod?: BusinessOrder['fulfillmentMethod']
 ) => {
-  const payer = fulfillmentMethod === 'PICKUP' ? 'cliente' : 'repartidor';
+  if (fulfillmentMethod !== 'PICKUP') {
+    return null;
+  }
 
   switch (status) {
     case 'PENDING':
-      return `Pago del ${payer} pendiente`;
+      return 'Pago del cliente pendiente';
     case 'CONFIRMED':
-      return `Pago del ${payer} confirmado`;
+      return 'Pago del cliente confirmado';
     case 'CANCELLED':
-      return `Pago del ${payer} cancelado`;
+      return 'Pago del cliente cancelado';
     default:
       return null;
   }
@@ -130,7 +132,7 @@ const getOrderNote = (order: BusinessOrder) => {
 
   if (order.status === 'CANCELLED') {
     return order.paymentStatus === 'REFUNDED'
-      ? 'Multipedido cancelado. El cliente recibio reembolso.'
+      ? 'Multipedido cancelado. El cliente recibió reembolso.'
       : 'Pedido cancelado antes de completarse.';
   }
 
@@ -144,13 +146,13 @@ const getOrderNote = (order: BusinessOrder) => {
 const getActionLabel = (status: BusinessOrder['status']) => {
   switch (status) {
     case 'PENDING':
-      return 'Preparar';
+      return 'Aceptar pedido';
     case 'ACCEPTED':
-      return 'Preparar';
+      return 'Empezar preparación';
     case 'PREPARING':
-      return 'Listo';
+      return 'Marcar listo';
     case 'READY':
-      return 'Entregado';
+      return 'Marcar entregado';
     default:
       return '';
   }
@@ -164,6 +166,7 @@ export function OrderRow({ order, compact = false, onConfirmCashPayout, onUpdate
   const total = (order.subtotalCents / 100).toFixed(2);
   const commission = ((order.businessCommissionCents ?? 0) / 100).toFixed(2);
   const payout = ((order.businessPayoutCents ?? order.subtotalCents) / 100).toFixed(2);
+  const isCashDelivery = order.paymentMethod === 'CASH' && order.fulfillmentMethod !== 'PICKUP';
   const canProcessOrder = order.paymentMethod === 'CASH' || order.paymentStatus === 'PAID';
   const canConfirmCashPayout =
     order.paymentMethod === 'CASH' &&
@@ -179,7 +182,7 @@ export function OrderRow({ order, compact = false, onConfirmCashPayout, onUpdate
 
     Alert.alert(
       'Confirmar dinero recibido',
-      `Confirma que ${order.fulfillmentMethod === 'PICKUP' ? 'el cliente' : 'el repartidor'} ya te entrego $${payout} de este pedido.`,
+      `Confirma que el cliente ya te entregó $${payout} de este pedido.`,
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -199,7 +202,7 @@ export function OrderRow({ order, compact = false, onConfirmCashPayout, onUpdate
       Alert.alert(
         isRejecting ? 'Rechazar pedido' : 'Aceptar pedido',
         isRejecting
-          ? 'Confirma que quieres rechazar este pedido. El cliente vera que el negocio no pudo aceptarlo.'
+          ? 'Confirma que quieres rechazar este pedido. El cliente verá que el negocio no pudo aceptarlo.'
           : 'Confirma que quieres aceptar este pedido y comenzar a prepararlo.',
         [
           { text: 'Cancelar', style: 'cancel' },
@@ -221,7 +224,7 @@ export function OrderRow({ order, compact = false, onConfirmCashPayout, onUpdate
     <View style={styles.orderRow}>
       <View style={styles.orderTopLine}>
         <View style={styles.orderTitleBlock}>
-          <Text style={styles.itemTitle}>Numero de pedido {orderNumber}</Text>
+          <Text style={styles.itemTitle}>Número de pedido {orderNumber}</Text>
           <Text style={styles.dateText}>{formatOrderDate(order.createdAt)}</Text>
           <Text style={styles.mutedText}>Items: {order.items.length}</Text>
         </View>
@@ -239,17 +242,21 @@ export function OrderRow({ order, compact = false, onConfirmCashPayout, onUpdate
           <Text style={styles.financialLabel}>Venta</Text>
           <Text style={styles.financialValue}>${total}</Text>
         </View>
+        {isCashDelivery ? null : (
+          <View style={styles.financialMetric}>
+            <Text style={styles.financialLabel}>Comisión RapiV</Text>
+            <Text style={styles.financialValueMuted}>-${commission}</Text>
+          </View>
+        )}
         <View style={styles.financialMetric}>
-          <Text style={styles.financialLabel}>Comision RapiV</Text>
-          <Text style={styles.financialValueMuted}>-${commission}</Text>
-        </View>
-        <View style={styles.financialMetric}>
-          <Text style={styles.financialLabel}>Recibiras</Text>
+          <Text style={styles.financialLabel}>{isCashDelivery ? 'Liquidación RapiV' : 'Recibirás'}</Text>
           <Text style={styles.financialValuePrimary}>${payout}</Text>
         </View>
       </View>
       <Text style={styles.financialNote}>
-        El envio y el pago al repartidor se liquidan aparte de la venta del negocio.
+        {isCashDelivery
+          ? 'En entregas con efectivo, RapiV cobra al repartidor desde su depósito y liquida al negocio sin confirmación manual.'
+          : 'El envío y el pago al repartidor se liquidan aparte de la venta del negocio.'}
       </Text>
       {cashPayoutLabel ? (
         <View style={[

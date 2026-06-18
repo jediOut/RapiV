@@ -19,7 +19,7 @@ services:
       - rapiv_staging
 
   backend:
-    image: rapiv-backend:staging
+    image: ${BACKEND_IMAGE:-rapiv-backend:staging}
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -54,7 +54,7 @@ services:
       - rapiv_staging
 
   migrate:
-    image: rapiv-backend:staging
+    image: ${BACKEND_IMAGE:-rapiv-backend:staging}
     build:
       context: .
       dockerfile: backend/Dockerfile

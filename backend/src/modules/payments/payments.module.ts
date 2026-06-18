@@ -9,9 +9,9 @@ import { CourierProfile } from "../users/courier-profile.entity";
 import { BusinessCommissionSettlement } from "./business-commission-settlement.entity";
 import { BusinessCommissionSettlementsController } from "./business-commission-settlements.controller";
 import { BusinessCommissionSettlementsService } from "./business-commission-settlements.service";
-import { CashSettlement } from "./cash-settlement.entity";
-import { CashSettlementsController } from "./cash-settlements.controller";
-import { CashSettlementsService } from "./cash-settlements.service";
+import { CourierWalletModule } from "./courier-wallet.module";
+import { CourierWalletTopUp } from "./courier-wallet-top-up.entity";
+import { CourierWalletTransaction } from "./courier-wallet-transaction.entity";
 import { PaymentEvent } from "./payment-event.entity";
 import { PaymentQueueModule } from "./payment-queue.module";
 import { PaymentProviderService } from "./payment-provider.service";
@@ -25,24 +25,25 @@ import { PaymentsService } from "./payments.service";
     TypeOrmModule.forFeature([
       Payment,
       PaymentEvent,
-      CashSettlement,
       BusinessCommissionSettlement,
       Order,
       Business,
-      CourierProfile
+      CourierProfile,
+      CourierWalletTopUp,
+      CourierWalletTransaction
     ]),
     NotificationsModule,
     OrdersModule,
+    CourierWalletModule,
     PaymentQueueModule
   ],
-  controllers: [PaymentsController, CashSettlementsController, BusinessCommissionSettlementsController],
+  controllers: [PaymentsController, BusinessCommissionSettlementsController],
   providers: [
     PaymentsService,
     PaymentProviderService,
     PaymentWebhookProcessor,
-    CashSettlementsService,
     BusinessCommissionSettlementsService
   ],
-  exports: [PaymentsService, CashSettlementsService, BusinessCommissionSettlementsService]
+  exports: [PaymentsService, BusinessCommissionSettlementsService]
 })
 export class PaymentsModule {}

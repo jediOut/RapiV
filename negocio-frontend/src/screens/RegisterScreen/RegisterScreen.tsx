@@ -7,7 +7,7 @@ import {
   RAPIV_DELIVERY_OPERATION_FEE_MXN
 } from "../../config/legal";
 import { useState } from "react";
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MapView, { Marker, MapPressEvent } from "react-native-maps";
 
@@ -150,7 +150,7 @@ export function RegisterScreen({
     }
 
     if (!coordinates) {
-      setFormError("Marca la ubicacion del negocio con GPS, busqueda o el mapa.");
+      setFormError("Marca la ubicación del negocio con GPS, búsqueda o el mapa.");
       return;
     }
 
@@ -170,7 +170,7 @@ export function RegisterScreen({
     }
 
     if (!acceptedTerms) {
-      setFormError("Debes aceptar los terminos y condiciones para crear tu cuenta.");
+      setFormError("Debes aceptar los términos y condiciones para crear tu cuenta.");
       return;
     }
 
@@ -201,13 +201,16 @@ export function RegisterScreen({
     <ScrollView
       contentContainerStyle={[
         styles.container,
-        { paddingBottom: Math.max(insets.bottom + 32, 72) },
+        {
+          paddingBottom: Math.max(insets.bottom + 32, 72),
+          paddingTop: Math.max(insets.top + 22, 44)
+        },
       ]}
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.brandBlock}>
-        <Text style={styles.brand}>RapiV</Text>
+        <Image source={require("../../../assets/icon.png")} style={styles.logoImage} />
         <Text style={styles.title}>Registro de negocio</Text>
         <Text style={styles.subtitle}>Crea la cuenta principal y registra la ubicación del comercio.</Text>
       </View>
@@ -310,17 +313,17 @@ export function RegisterScreen({
             RapiV cobra {RAPIV_BUSINESS_COMMISSION_PERCENT}% sobre cada venta realizada dentro de la app.
           </Text>
           <Text style={styles.commissionText}>
-            En pedidos con entrega, el envio de ${RAPIV_CUSTOMER_DELIVERY_FEE_MXN} MXN se maneja aparte: ${RAPIV_COURIER_PAYOUT_MXN} MXN son para el repartidor y ${RAPIV_DELIVERY_OPERATION_FEE_MXN} MXN son comision operativa de RapiV.
+            En pedidos con entrega, el envío de ${RAPIV_CUSTOMER_DELIVERY_FEE_MXN} MXN se maneja aparte: ${RAPIV_COURIER_PAYOUT_MXN} MXN son para el repartidor y ${RAPIV_DELIVERY_OPERATION_FEE_MXN} MXN son comisión operativa de RapiV.
           </Text>
           <Text style={styles.commissionText}>
-            Estas comisiones pueden cambiar en el futuro porque estan sujetas a costos operativos.
+            Estas comisiones pueden cambiar en el futuro porque están sujetas a costos operativos.
           </Text>
         </View>
         <Pressable onPress={() => setAcceptedTerms((current) => !current)} style={styles.termsRow}>
           <View style={[styles.checkbox, acceptedTerms ? styles.checkboxChecked : null]}>
             {acceptedTerms ? <Text style={styles.checkboxMark}>✓</Text> : null}
           </View>
-          <Text style={styles.termsText}>Acepto los terminos y condiciones de RapiV Negocios.</Text>
+          <Text style={styles.termsText}>Acepto los términos y condiciones de RapiV Negocios.</Text>
         </Pressable>
         {formError ? <Text style={styles.errorText}>{formError}</Text> : null}
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -352,6 +355,12 @@ const styles = StyleSheet.create({
   },
   brandBlock: {
     marginBottom: 24
+  },
+  logoImage: {
+    borderRadius: 18,
+    height: 76,
+    marginBottom: 18,
+    width: 76
   },
   brand: {
     color: colors.primary,

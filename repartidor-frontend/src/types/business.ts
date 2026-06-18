@@ -34,6 +34,7 @@ export type Order = {
   courierPayoutFailedAt?: string | Date | null;
   courierPayoutError?: string | null;
   platformDeliveryMarginCents?: number;
+  cashSettlementRequiredCents?: number;
   totalCents: number;
   customerName?: string;
   customerPhone?: string;

@@ -93,10 +93,10 @@ export default function ProfileScreen({ navigation, onLogout }: Props) {
   };
 
   const handleLogout = async () => {
-    Alert.alert('Cerrar sesion', 'Seguro que quieres cerrar sesion?', [
+    Alert.alert('Cerrar sesión', '¿Seguro que quieres cerrar sesión?', [
       { text: 'Cancelar', style: 'cancel' },
       {
-        text: 'Cerrar sesion',
+        text: 'Cerrar sesión',
         style: 'destructive',
         onPress: async () => {
           await authApi.logout();
@@ -175,11 +175,11 @@ export default function ProfileScreen({ navigation, onLogout }: Props) {
                   </View>
                 ))
               ) : (
-                <Text style={styles.emptyText}>Aun no has valorado pedidos entregados.</Text>
+                <Text style={styles.emptyText}>Aún no has valorado pedidos entregados.</Text>
               )}
             </View>
 
-            <PrimaryButton label="Cerrar sesion" onPress={handleLogout} />
+            <PrimaryButton label="Cerrar sesión" onPress={handleLogout} />
           </>
         ) : null}
       </ScrollView>

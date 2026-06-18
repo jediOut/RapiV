@@ -59,7 +59,7 @@ function missingConfigMessage() {
     return "Google no esta configurado para Android.";
   }
 
-  return "Google aun no esta configurado para esta app.";
+  return "Google aún no está configurado para esta app.";
 }
 
 export function GoogleSignInButton({ disabled = false, onToken, onError }: GoogleSignInButtonProps) {
@@ -98,7 +98,7 @@ export function GoogleSignInButton({ disabled = false, onToken, onError }: Googl
     }
 
     if (response.type === "error") {
-      onError("No se pudo iniciar sesion con Google.");
+      onError("No se pudo iniciar sesión con Google.");
     }
   }, [onError, onToken, response]);
 

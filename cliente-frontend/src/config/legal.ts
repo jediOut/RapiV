@@ -1,22 +1,22 @@
 export const CURRENT_TERMS_VERSION = "2026-06-09";
 
-export const CUSTOMER_TERMS_TITLE = "Terminos y condiciones - RapiV Cliente";
+export const CUSTOMER_TERMS_TITLE = "Términos y condiciones - RapiV Cliente";
 
 export const CUSTOMER_TERMS_SECTIONS = [
   {
     title: "Servicio",
     body:
-      "RapiV Cliente es una aplicacion para encontrar restaurantes, productos y negocios locales, realizar pedidos y consultar el estado de entrega dentro de la zona de servicio definida por RapiV."
+      "RapiV Cliente es una aplicación para encontrar restaurantes, productos y negocios locales, realizar pedidos y consultar el estado de entrega dentro de la zona de servicio definida por RapiV."
   },
   {
     title: "Cuenta",
     body:
-      "El usuario debe proporcionar informacion veraz y mantener la confidencialidad de su cuenta. RapiV puede suspender cuentas con uso indebido, datos falsos, fraude o actividad que afecte a otros usuarios, negocios o repartidores."
+      "El usuario debe proporcionar información veraz y mantener la confidencialidad de su cuenta. RapiV puede suspender cuentas con uso indebido, datos falsos, fraude o actividad que afecte a otros usuarios, negocios o repartidores."
   },
   {
     title: "Pedidos",
     body:
-      "Los precios, disponibilidad, tiempos estimados y condiciones de entrega pueden cambiar segun cada negocio, disponibilidad de repartidores, clima, ubicacion o carga operativa. Un pedido puede ser rechazado, cancelado o ajustado cuando el negocio no pueda prepararlo o cuando no sea posible entregarlo."
+      "Los precios, disponibilidad, tiempos estimados y condiciones de entrega pueden cambiar según cada negocio, disponibilidad de repartidores, clima, ubicación o carga operativa. Un pedido puede ser rechazado, cancelado o ajustado cuando el negocio no pueda prepararlo o cuando no sea posible entregarlo."
   },
   {
     title: "Pagos",
@@ -26,7 +26,7 @@ export const CUSTOMER_TERMS_SECTIONS = [
   {
     title: "Entregas",
     body:
-      "El usuario debe estar disponible en la direccion indicada y responder llamadas o mensajes necesarios para completar la entrega. Si no puede localizarse al usuario, el pedido puede demorarse, cancelarse o marcarse segun las politicas operativas vigentes."
+      "El usuario debe estar disponible en la dirección indicada y responder llamadas o mensajes necesarios para completar la entrega. Si no puede localizarse al usuario, el pedido puede demorarse, cancelarse o marcarse según las políticas operativas vigentes."
   },
   {
     title: "Calificaciones y comentarios",
@@ -36,21 +36,21 @@ export const CUSTOMER_TERMS_SECTIONS = [
   {
     title: "Datos personales",
     body:
-      "RapiV puede tratar datos como nombre, correo, telefono, direccion, ubicacion aproximada, historial de pedidos y datos tecnicos de uso para operar la app, procesar pedidos, mejorar el servicio, prevenir fraude y enviar notificaciones relacionadas con la cuenta o pedidos."
+      "RapiV puede tratar datos como nombre, correo, teléfono, dirección, ubicación aproximada, historial de pedidos y datos técnicos de uso para operar la app, procesar pedidos, mejorar el servicio, prevenir fraude y enviar notificaciones relacionadas con la cuenta o pedidos."
   },
   {
-    title: "Limitacion de responsabilidad",
+    title: "Limitación de responsabilidad",
     body:
-      "RapiV facilita la conexion entre usuarios, negocios y repartidores. Los negocios son responsables de sus productos, precios, inventario, preparacion y calidad. Los repartidores son responsables de cumplir las entregas asignadas conforme a las reglas de la app."
+      "RapiV facilita la conexión entre usuarios, negocios y repartidores. Los negocios son responsables de sus productos, precios, inventario, preparación y calidad. Los repartidores son responsables de cumplir las entregas asignadas conforme a las reglas de la app."
   },
   {
     title: "Cambios",
     body:
-      "RapiV puede actualizar estos terminos. Si el cambio es relevante, se solicitara aceptar la nueva version antes de seguir usando la app."
+      "RapiV puede actualizar estos términos. Si el cambio es relevante, se solicitará aceptar la nueva versión antes de seguir usando la app."
   },
   {
     title: "Contacto",
     body:
-      "Para dudas, soporte o solicitudes relacionadas con estos terminos, contacta a RapiV por los canales oficiales publicados en la app o pagina de redes sociales."
+      "Para dudas, soporte o solicitudes relacionadas con estos términos, contacta a RapiV por los canales oficiales publicados en la app o página de redes sociales."
   }
 ];

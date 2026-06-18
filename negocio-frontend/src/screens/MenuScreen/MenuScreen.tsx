@@ -1,7 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { useState } from "react";
-import { Image, StyleSheet, Text, TextInput, View } from "react-native";
+import { Image, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { ProductRow } from "../../components/ProductRow";
 import { PrimaryButton } from "../../components/PrimaryButton";
@@ -23,7 +23,11 @@ type MenuScreenProps = {
     imageAsset?: ImagePicker.ImagePickerAsset
   ) => void;
   onPrepTimeChange: (value: string) => void;
+  onConnectStripe: () => void;
+  onRefreshStripeStatus: () => void;
   onToggleProduct: (id: string) => void;
+  canPublishProducts: boolean;
+  hasStripeConnectAccount: boolean;
   prepTime: string;
   products: Product[];
 };
@@ -35,7 +39,11 @@ export function MenuScreen({
   onCreateProduct,
   onUpdateProduct,
   onPrepTimeChange,
+  onConnectStripe,
+  onRefreshStripeStatus,
   onToggleProduct,
+  canPublishProducts,
+  hasStripeConnectAccount,
   prepTime,
   products
 }: MenuScreenProps) {
@@ -87,6 +95,10 @@ export function MenuScreen({
   }
 
   function handleSaveProduct() {
+    if (!editingProduct && !canPublishProducts) {
+      return;
+    }
+
     const priceCents = Math.round(Number(price) * 100);
     const minimumQuantityPerOrder = Math.max(1, Math.floor(Number(minimumQuantity)));
 
@@ -135,7 +147,45 @@ export function MenuScreen({
       </View>
 
       <View style={styles.panel}>
-        <Text style={styles.sectionTitle}>Menu del negocio</Text>
+        <Text style={styles.sectionTitle}>Menú del negocio</Text>
+        {!canPublishProducts ? (
+          <View style={styles.stripeNotice}>
+            <View style={styles.stripeNoticeIcon}>
+              <Ionicons name="card-outline" size={22} color={colors.primary} />
+            </View>
+            <View style={styles.stripeNoticeContent}>
+              <Text style={styles.stripeNoticeTitle}>
+                Stripe Connect requerido
+              </Text>
+              <Text style={styles.stripeNoticeText}>
+                Para publicar productos y recibir pagos, completa Stripe Connect en tu negocio.
+              </Text>
+              <View style={styles.stripeNoticeActions}>
+                <Pressable
+                  disabled={isMutatingProduct}
+                  onPress={onConnectStripe}
+                  style={styles.stripeNoticeButton}
+                >
+                  <Text style={styles.stripeNoticeButtonText}>
+                    {hasStripeConnectAccount ? "Continuar Stripe" : "Configurar Stripe"}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  disabled={isMutatingProduct || !hasStripeConnectAccount}
+                  onPress={onRefreshStripeStatus}
+                  style={[
+                    styles.stripeNoticeButtonSecondary,
+                    (!hasStripeConnectAccount || isMutatingProduct) && styles.stripeNoticeButtonDisabled
+                  ]}
+                >
+                  <Text style={styles.stripeNoticeButtonSecondaryText}>
+                    Actualizar estado
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        ) : null}
         {isLoading ? (
           <StateView
             compact
@@ -147,7 +197,7 @@ export function MenuScreen({
           <StateView
             compact
             message={error}
-            title={error.includes("Sin conexion") ? "Sin conexion" : "No pudimos cargar el menu"}
+            title={error.includes("Sin conexion") ? "Sin conexión" : "No pudimos cargar el menú"}
             type="error"
           />
         ) : products.length === 0 ? (
@@ -160,6 +210,7 @@ export function MenuScreen({
         {!isLoading && !error ? products.map((product) => (
           <ProductRow
             key={product.id}
+            canPublishProducts={canPublishProducts}
             disabled={isMutatingProduct}
             onEdit={startEditProduct}
             onToggle={onToggleProduct}
@@ -216,7 +267,7 @@ export function MenuScreen({
         <TextInput
           keyboardType="number-pad"
           onChangeText={setMinimumQuantity}
-          placeholder="Minimo por pedido"
+          placeholder="Mínimo por pedido"
           placeholderTextColor={colors.muted}
           style={styles.formInput}
           value={minimumQuantity}
@@ -243,7 +294,7 @@ export function MenuScreen({
           />
         </View>
         <PrimaryButton
-          disabled={isMutatingProduct}
+          disabled={isMutatingProduct || (!editingProduct && !canPublishProducts)}
           label={
             isMutatingProduct
               ? "Guardando..."
@@ -353,5 +404,74 @@ const styles = StyleSheet.create({
     height: 58,
     justifyContent: "center",
     width: 58
+  },
+  stripeNotice: {
+    alignItems: "flex-start",
+    backgroundColor: colors.primaryLight,
+    borderColor: colors.primaryBorder,
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 12,
+    padding: 12
+  },
+  stripeNoticeIcon: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderRadius: 8,
+    height: 40,
+    justifyContent: "center",
+    width: 40
+  },
+  stripeNoticeContent: {
+    flex: 1
+  },
+  stripeNoticeTitle: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "900"
+  },
+  stripeNoticeText: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 18,
+    marginTop: 4
+  },
+  stripeNoticeActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 10
+  },
+  stripeNoticeButton: {
+    alignItems: "center",
+    backgroundColor: colors.primary,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10
+  },
+  stripeNoticeButtonText: {
+    color: colors.surface,
+    fontSize: 13,
+    fontWeight: "900"
+  },
+  stripeNoticeButtonSecondary: {
+    alignItems: "center",
+    backgroundColor: colors.surface,
+    borderColor: colors.primaryBorder,
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10
+  },
+  stripeNoticeButtonSecondaryText: {
+    color: colors.primary,
+    fontSize: 13,
+    fontWeight: "900"
+  },
+  stripeNoticeButtonDisabled: {
+    opacity: 0.5
   }
 });

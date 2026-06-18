@@ -2,109 +2,178 @@ name: Deploy staging-lite
 
 on:
   workflow_dispatch:
-    inputs:
-      use_domain:
-        description: "Start Caddy/HTTPS for a real staging domain"
-        required: true
-        default: false
-        type: boolean
+  push:
+    branches:
+      - main
 
 permissions:
+  actions: write
   contents: read
   id-token: write
+
+concurrency:
+  group: staging-lite-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY_NAME: rapiv-backend-staging
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Package repository
-        run: |
-          tar \
-            --exclude='.git' \
-            --exclude='node_modules' \
-            --exclude='*/node_modules' \
-            --exclude='.expo' \
-            --exclude='*/.expo' \
-            --exclude='deploy/staging.env' \
-            --exclude='**/.terraform' \
-            --exclude='**/.terraform.lock.hcl' \
-            --exclude='**/terraform.tfstate' \
-            --exclude='**/terraform.tfstate.*' \
-            --exclude='**/terraform.tfvars' \
-            -czf /tmp/rapiv-staging.tar.gz .
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Test backend
+        working-directory: backend
+        run: npm test
+
+      - name: Typecheck backend
+        working-directory: backend
+        run: npm run typecheck
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ secrets.STAGING_AWS_ROLE_ARN }}
 
-      - name: Upload deploy artifacts
+      - name: Resolve ECR repository
+        id: ecr
+        run: |
+          set -euo pipefail
+          REPOSITORY_URI="$(aws ecr describe-repositories \
+            --repository-names "$ECR_REPOSITORY_NAME" \
+            --query 'repositories[0].repositoryUri' \
+            --output text)"
+          echo "repository_uri=${REPOSITORY_URI}" >> "$GITHUB_OUTPUT"
+          echo "image_uri=${REPOSITORY_URI}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.image_uri }}
+            ${{ steps.ecr.outputs.repository_uri }}:staging-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Package deployment files
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/rapiv-deploy/deploy/caddy
+          cp docker-compose.staging.yml /tmp/rapiv-deploy/docker-compose.staging.yml
+          cp deploy/caddy/Caddyfile /tmp/rapiv-deploy/deploy/caddy/Caddyfile
+          tar -czf /tmp/rapiv-staging-deploy.tar.gz -C /tmp/rapiv-deploy .
+
+      - name: Upload deployment files
         id: upload
         env:
           STAGING_DEPLOY_BUCKET: ${{ secrets.STAGING_DEPLOY_BUCKET }}
           STAGING_ENV_FILE: ${{ secrets.STAGING_ENV_FILE }}
         run: |
           set -euo pipefail
-          RELEASE_KEY="releases/${GITHUB_RUN_ID}-${GITHUB_SHA}.tar.gz"
+          RELEASE_KEY="releases/${GITHUB_RUN_ID}-${GITHUB_SHA}-deploy.tar.gz"
           ENV_KEY="releases/${GITHUB_RUN_ID}-${GITHUB_SHA}.env"
           printf '%s\n' "$STAGING_ENV_FILE" > /tmp/staging.env
-          aws s3 cp /tmp/rapiv-staging.tar.gz "s3://${STAGING_DEPLOY_BUCKET}/${RELEASE_KEY}" --sse AES256
+          aws s3 cp /tmp/rapiv-staging-deploy.tar.gz "s3://${STAGING_DEPLOY_BUCKET}/${RELEASE_KEY}" --sse AES256
           aws s3 cp /tmp/staging.env "s3://${STAGING_DEPLOY_BUCKET}/${ENV_KEY}" --sse AES256
           echo "release_key=${RELEASE_KEY}" >> "$GITHUB_OUTPUT"
           echo "env_key=${ENV_KEY}" >> "$GITHUB_OUTPUT"
 
       - name: Deploy on EC2 through SSM
         env:
+          BACKEND_IMAGE: ${{ steps.ecr.outputs.image_uri }}
           STAGING_DEPLOY_BUCKET: ${{ secrets.STAGING_DEPLOY_BUCKET }}
           STAGING_INSTANCE_ID: ${{ secrets.STAGING_INSTANCE_ID }}
           RELEASE_KEY: ${{ steps.upload.outputs.release_key }}
           ENV_KEY: ${{ steps.upload.outputs.env_key }}
-          USE_DOMAIN: ${{ inputs.use_domain }}
         run: |
           set -euo pipefail
-          PARAMS=$(jq -n \
+          ECR_REGISTRY="${BACKEND_IMAGE%/*}"
+          PARAMS="$(jq -n \
+            --arg aws_region "$AWS_REGION" \
+            --arg backend_image "$BACKEND_IMAGE" \
             --arg bucket "$STAGING_DEPLOY_BUCKET" \
             --arg release_key "$RELEASE_KEY" \
             --arg env_key "$ENV_KEY" \
-            --arg use_domain "$USE_DOMAIN" \
+            --arg ecr_registry "$ECR_REGISTRY" \
             '{commands: [
-              "set -euo pipefail",
+              "set -eu",
+              "APP_DIR=/opt/rapiv",
+              "mkdir -p \"$APP_DIR\" \"$APP_DIR/deploy\"",
               "if ! command -v aws >/dev/null 2>&1; then apt-get update && apt-get install -y awscli; fi",
-              "mkdir -p /opt/rapiv/deploy",
-              "aws s3 cp \"s3://\($bucket)/\($release_key)\" /tmp/rapiv-staging.tar.gz",
+              "aws s3 cp \"s3://\($bucket)/\($release_key)\" /tmp/rapiv-staging-deploy.tar.gz",
               "aws s3 cp \"s3://\($bucket)/\($env_key)\" /tmp/staging.env",
-              "tar -xzf /tmp/rapiv-staging.tar.gz -C /opt/rapiv",
-              "install -m 600 /tmp/staging.env /opt/rapiv/deploy/staging.env",
-              "cd /opt/rapiv",
-              "if [ \"\($use_domain)\" = \"true\" ]; then COMPOSE_FILES=\"-f docker-compose.staging.yml\"; SERVICES=\"backend caddy\"; else COMPOSE_FILES=\"-f docker-compose.staging.yml -f docker-compose.staging-ip.yml\"; SERVICES=\"backend\"; fi",
-              "docker compose $COMPOSE_FILES build backend migrate",
-              "docker compose $COMPOSE_FILES --profile tools run --rm migrate",
-              "docker compose $COMPOSE_FILES up -d $SERVICES",
-              "docker image prune -f",
-              "rm -f /tmp/rapiv-staging.tar.gz /tmp/staging.env",
-              "chown -R ubuntu:ubuntu /opt/rapiv"
-            ]}')
-          COMMAND_ID=$(aws ssm send-command \
+              "tar -xzf /tmp/rapiv-staging-deploy.tar.gz -C \"$APP_DIR\"",
+              "install -m 600 /tmp/staging.env \"$APP_DIR/deploy/staging.env\"",
+              "cd \"$APP_DIR\"",
+              "aws ecr get-login-password --region \($aws_region) | docker login --username AWS --password-stdin \($ecr_registry)",
+              "export BACKEND_IMAGE=\"\($backend_image)\"",
+              "docker pull \"$BACKEND_IMAGE\"",
+              "docker compose -f docker-compose.staging.yml --profile tools run --no-build --rm migrate",
+              "docker compose -f docker-compose.staging.yml up -d --no-build backend caddy",
+              "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do if docker exec rapiv_staging_backend wget -qO- http://127.0.0.1:3000/api/health; then exit 0; fi; sleep 2; done",
+              "docker compose -f docker-compose.staging.yml logs --tail=120 backend",
+              "exit 1"
+            ]}')"
+          COMMAND_ID="$(aws ssm send-command \
             --document-name AWS-RunShellScript \
             --instance-ids "$STAGING_INSTANCE_ID" \
             --comment "Deploy RapiV staging ${GITHUB_SHA}" \
             --parameters "$PARAMS" \
             --query 'Command.CommandId' \
-            --output text)
-          aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "$STAGING_INSTANCE_ID"
+            --output text)"
+          echo "SSM command: ${COMMAND_ID}"
+
+          STATUS="Pending"
+          for _ in $(seq 1 90); do
+            STATUS="$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$STAGING_INSTANCE_ID" \
+              --query 'Status' \
+              --output text)"
+            if [ "$STATUS" != "Pending" ] && [ "$STATUS" != "InProgress" ] && [ "$STATUS" != "Delayed" ]; then
+              break
+            fi
+            sleep 10
+          done
+
           aws ssm get-command-invocation \
             --command-id "$COMMAND_ID" \
             --instance-id "$STAGING_INSTANCE_ID" \
             --query '{Status:Status,ResponseCode:ResponseCode,StandardOutputContent:StandardOutputContent,StandardErrorContent:StandardErrorContent}' \
             --output json
 
-      - name: Remove deploy artifacts
+          if [ "$STATUS" != "Success" ]; then
+            exit 1
+          fi
+
+      - name: Remove deployment files
         if: always() && steps.upload.outputs.release_key != ''
         env:
           STAGING_DEPLOY_BUCKET: ${{ secrets.STAGING_DEPLOY_BUCKET }}

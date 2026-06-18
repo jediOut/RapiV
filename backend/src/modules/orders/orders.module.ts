@@ -16,21 +16,22 @@ import { OrderOfferProcessor } from "./order-offer.processor";
 import { UsersModule } from "../users/users.module";
 import { NotificationsModule } from "../notifications/notifications.module";
 import { Payment } from "../payments/payment.entity";
-import { CashSettlement } from "../payments/cash-settlement.entity";
 import { PaymentQueueModule } from "../payments/payment-queue.module";
 import { PaymentProviderService } from "../payments/payment-provider.service";
+import { CourierWalletModule } from "../payments/courier-wallet.module";
 import { StripeConnectModule } from "../stripe-connect/stripe-connect.module";
 import { CourierStripeConnectReturnController } from "./courier-stripe-connect-return.controller";
 import { OrderLifecycleProcessor } from "./order-lifecycle.processor";
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Order, OrderItem, DeliveryOffer, Product, User, CourierProfile, Payment, CashSettlement]),
+    TypeOrmModule.forFeature([Order, OrderItem, DeliveryOffer, Product, User, CourierProfile, Payment]),
     BusinessesModule,
     ProductsModule,
     UsersModule,
     NotificationsModule,
     PaymentQueueModule,
+    CourierWalletModule,
     StripeConnectModule
   ],
   controllers: [OrdersController, CourierStripeConnectReturnController],

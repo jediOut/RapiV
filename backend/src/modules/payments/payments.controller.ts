@@ -1,9 +1,11 @@
-import { Body, Controller, Get, Header, Headers, Param, Post, Query, Req } from "@nestjs/common";
+import { Body, Controller, ForbiddenException, Get, Header, Headers, Param, Post, Query, Req } from "@nestjs/common";
 
 import { CurrentUser } from "../../common/auth/current-user.decorator";
 import type { AuthenticatedUser } from "../../common/auth/jwt-auth.guard";
 import { Public } from "../../common/auth/public.decorator";
 import { CreatePaymentDto } from "./dto/create-payment.dto";
+import { CreateCourierWalletTopUpDto } from "./dto/create-courier-wallet-top-up.dto";
+import { CreateCourierWalletWithdrawalDto } from "./dto/create-courier-wallet-withdrawal.dto";
 import { PaymentWebhookDto } from "./dto/payment-webhook.dto";
 import { PaymentsService } from "./payments.service";
 
@@ -30,6 +32,41 @@ export class PaymentsController {
     @Param("orderGroupId") orderGroupId: string
   ) {
     return this.paymentsService.findMine(user.sub, orderGroupId);
+  }
+
+  @Get("courier-wallet")
+  getCourierWallet(@CurrentUser() user: AuthenticatedUser) {
+    this.assertCourier(user);
+    return this.paymentsService.getCourierWallet(user.sub);
+  }
+
+  @Post("courier-wallet/top-ups")
+  createCourierWalletTopUp(
+    @CurrentUser() user: AuthenticatedUser,
+    @Headers("idempotency-key") idempotencyKey: string | undefined,
+    @Body() dto: CreateCourierWalletTopUpDto
+  ) {
+    this.assertCourier(user);
+    return this.paymentsService.createCourierWalletTopUp(user.sub, idempotencyKey, dto);
+  }
+
+  @Post("courier-wallet/top-ups/:topUpId/sync")
+  syncCourierWalletTopUp(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param("topUpId") topUpId: string
+  ) {
+    this.assertCourier(user);
+    return this.paymentsService.syncCourierWalletTopUp(user.sub, topUpId);
+  }
+
+  @Post("courier-wallet/withdrawals")
+  createCourierWalletWithdrawal(
+    @CurrentUser() user: AuthenticatedUser,
+    @Headers("idempotency-key") idempotencyKey: string | undefined,
+    @Body() dto: CreateCourierWalletWithdrawalDto
+  ) {
+    this.assertCourier(user);
+    return this.paymentsService.createCourierWalletWithdrawal(user.sub, idempotencyKey, dto);
   }
 
   @Post(":paymentId/sync")
@@ -80,6 +117,45 @@ export class PaymentsController {
   }
 
   @Public()
+  @Get("courier-wallet/stripe-return")
+  @Header("Content-Type", "text/html; charset=utf-8")
+  async courierWalletStripeReturn(@Query("session_id") sessionId: string | undefined) {
+    if (!sessionId) {
+      return this.renderStripeReturnPage(
+        "No pudimos confirmar la recarga",
+        "Stripe no regreso el identificador de la sesion. Vuelve a RapiV Repartidor y actualiza tu saldo."
+      );
+    }
+
+    try {
+      const topUp = await this.paymentsService.syncCourierWalletTopUpByCheckoutSession(sessionId);
+      const isPaid = topUp.status === "SUCCEEDED";
+
+      return this.renderStripeReturnPage(
+        isPaid ? "Recarga confirmada" : "Recarga pendiente",
+        isPaid
+          ? "Tu saldo RapiV ya fue actualizado. Regresa a RapiV Repartidor para continuar."
+          : "Stripe aun esta procesando la recarga. Regresa a RapiV Repartidor y actualiza tu saldo en unos segundos."
+      );
+    } catch {
+      return this.renderStripeReturnPage(
+        "No pudimos confirmar la recarga",
+        "Regresa a RapiV Repartidor y actualiza tu saldo. Si el cargo aparece en Stripe, soporte puede sincronizarlo."
+      );
+    }
+  }
+
+  @Public()
+  @Get("courier-wallet/stripe-cancelled")
+  @Header("Content-Type", "text/html; charset=utf-8")
+  courierWalletStripeCancelled() {
+    return this.renderStripeReturnPage(
+      "Recarga cancelada",
+      "No se completo la recarga. Puedes regresar a RapiV Repartidor e intentarlo de nuevo."
+    );
+  }
+
+  @Public()
   @Post("webhooks/provider")
   receiveWebhook(
     @Headers("x-payment-signature") signature: string | undefined,
@@ -115,5 +191,11 @@ export class PaymentsController {
     </main>
   </body>
 </html>`;
+  }
+
+  private assertCourier(user: AuthenticatedUser): void {
+    if (!user.roles.includes("COURIER")) {
+      throw new ForbiddenException("Only couriers can access courier wallet");
+    }
   }
 }

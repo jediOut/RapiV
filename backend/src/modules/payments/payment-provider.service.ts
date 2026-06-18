@@ -17,6 +17,14 @@ type CreateProviderPaymentInput = {
   splits: PaymentSplit[];
 };
 
+type CreateCourierWalletTopUpInput = {
+  localTopUpId: string;
+  idempotencyKey: string;
+  courierId: string;
+  amountCents: number;
+  currency: string;
+};
+
 export type ProviderPayment = {
   provider: string;
   providerPaymentId: string;
@@ -117,6 +125,58 @@ export class PaymentProviderService {
         currency: input.currency,
         transferGroup,
         transferSplits: input.splits
+      }
+    };
+  }
+
+  async createCourierWalletTopUp(input: CreateCourierWalletTopUpInput): Promise<ProviderPayment> {
+    const apiKey = this.requireStripeSecretKey();
+    const returnBaseUrl = this.requirePaymentReturnBaseUrl();
+    const successUrl = `${returnBaseUrl}/payments/courier-wallet/stripe-return?session_id={CHECKOUT_SESSION_ID}`;
+    const cancelUrl = `${returnBaseUrl}/payments/courier-wallet/stripe-cancelled`;
+
+    const session = await this.stripeRequest<Record<string, unknown>>(
+      "/v1/checkout/sessions",
+      {
+        mode: "payment",
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        client_reference_id: input.localTopUpId,
+        "line_items[0][quantity]": "1",
+        "line_items[0][price_data][currency]": input.currency.toLowerCase(),
+        "line_items[0][price_data][unit_amount]": String(input.amountCents),
+        "line_items[0][price_data][product_data][name]": "Recarga saldo RapiV Repartidor",
+        "payment_intent_data[metadata][top_up_id]": input.localTopUpId,
+        "payment_intent_data[metadata][courier_id]": input.courierId,
+        "payment_intent_data[metadata][payment_type]": "courier_wallet_top_up",
+        "metadata[top_up_id]": input.localTopUpId,
+        "metadata[courier_id]": input.courierId,
+        "metadata[payment_type]": "courier_wallet_top_up"
+      },
+      apiKey,
+      input.idempotencyKey
+    );
+
+    const sessionId = this.stringField(session, "id");
+    const checkoutUrl = this.stringField(session, "url");
+
+    if (!sessionId || !checkoutUrl) {
+      throw new Error("Stripe Checkout Session did not return an id and URL");
+    }
+
+    return {
+      provider: this.providerName,
+      providerPaymentId: sessionId,
+      checkoutUrl,
+      clientSecret: checkoutUrl,
+      status: "REQUIRES_ACTION",
+      metadata: {
+        checkoutSessionId: sessionId,
+        checkoutUrl,
+        courierId: input.courierId,
+        amountCents: input.amountCents,
+        currency: input.currency,
+        paymentType: "courier_wallet_top_up"
       }
     };
   }
@@ -249,6 +309,36 @@ export class PaymentProviderService {
       },
       apiKey,
       `courier-transfer-${input.orderGroupId}-${input.courierId}`
+    );
+
+    return {
+      courierId: input.courierId,
+      connectedAccountId: input.connectedAccountId,
+      providerTransferId: this.stringField(transfer, "id") ?? "",
+      amountCents: input.amountCents
+    };
+  }
+
+  async createCourierWalletWithdrawalTransfer(input: {
+    courierId: string;
+    connectedAccountId: string;
+    amountCents: number;
+    currency: string;
+    idempotencyKey: string;
+  }): Promise<ProviderCourierTransfer> {
+    const apiKey = this.requireStripeSecretKey();
+    const transfer = await this.stripeRequest<Record<string, unknown>>(
+      "/v1/transfers",
+      {
+        amount: String(input.amountCents),
+        currency: input.currency.toLowerCase(),
+        destination: input.connectedAccountId,
+        transfer_group: `COURIER_WALLET_${input.courierId}`,
+        "metadata[courier_id]": input.courierId,
+        "metadata[payout_type]": "courier_wallet_withdrawal"
+      },
+      apiKey,
+      input.idempotencyKey
     );
 
     return {

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
+  Image,
   Linking,
   Pressable,
   RefreshControl,
@@ -16,8 +17,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   acceptDeliveryOffer,
+  createCourierWalletTopUp,
+  createCourierWalletWithdrawal,
   createCourierStripeOnboardingLink,
+  fetchCourierWallet,
   type DeliveryOffer,
+  type CourierWalletSummary,
   fetchAssignedOrders,
   fetchCourierStripeProfile,
   fetchDeliveryOffers,
@@ -25,6 +30,7 @@ import {
   markBusinessOrderPickedUp,
   notifyCustomerArrival,
   refreshCourierStripeStatus,
+  syncCourierWalletTopUp,
   updateDeliveryStatus,
   updateCourierLocation,
   updateCourierAvailability,
@@ -47,6 +53,7 @@ import {
   getPickupPoint,
   getRouteButtonLabel,
   getRouteDestination,
+  isTerminalDeliveryStatus,
 } from './HomeScreen.logic';
 
 type ListedOrder = Order & {
@@ -58,7 +65,7 @@ type HomeScreenProps = {
   onLogout: () => void;
 };
 
-type CourierTab = 'work' | 'history' | 'profile';
+type CourierTab = 'work' | 'wallet' | 'history' | 'profile';
 
 function formatMoney(cents?: number | null) {
   return `$${((cents ?? 0) / 100).toFixed(2)}`;
@@ -91,14 +98,14 @@ function payoutStatusCopy(order: Order) {
     case 'CANCELLED':
       return {
         label: 'Cancelado',
-        detail: 'La entrega no genero pago.',
+        detail: 'La entrega no generó pago.',
         tone: 'neutral' as const,
       };
     case 'PENDING':
     default:
       return {
         label: 'Pendiente',
-        detail: 'Se transferira cuando Stripe confirme que todo esta listo.',
+        detail: 'Se transferirá cuando Stripe confirme que todo está listo.',
         tone: 'pending' as const,
       };
   }
@@ -122,6 +129,14 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [stripeProfile, setStripeProfile] = useState<CourierStripeConnectProfile | null>(null);
+  const [wallet, setWallet] = useState<CourierWalletSummary | null>(null);
+  const [topUpAmount, setTopUpAmount] = useState('300');
+  const [withdrawAmount, setWithdrawAmount] = useState('100');
+  const [lastTopUpId, setLastTopUpId] = useState<string | null>(null);
+  const [walletError, setWalletError] = useState<string | null>(null);
+  const [isCreatingTopUp, setIsCreatingTopUp] = useState(false);
+  const [isWithdrawing, setIsWithdrawing] = useState(false);
+  const [isSyncingTopUp, setIsSyncingTopUp] = useState(false);
   const [isUpdatingStripe, setIsUpdatingStripe] = useState(false);
   const [profileForm, setProfileForm] = useState({
     fullName: '',
@@ -143,7 +158,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
       const token = await getToken();
 
       if (!token) {
-        setError('Tu sesion expiro. Inicia sesion nuevamente.');
+      setError('Tu sesión expiró. Inicia sesión nuevamente.');
         return;
       }
 
@@ -158,19 +173,29 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
         });
       }
 
-      const [offers, assigned, courierStripeProfile] = await Promise.all([
+      const [offers, assigned, courierStripeProfile, courierWallet] = await Promise.all([
         fetchDeliveryOffers(token),
         fetchAssignedOrders(token),
         fetchCourierStripeProfile(token),
+        fetchCourierWallet(token),
       ]);
       const hasActiveDelivery = assigned.some((order) =>
         ACTIVE_PARTIAL_DELIVERY_STATUSES.includes(order.status as typeof ACTIVE_PARTIAL_DELIVERY_STATUSES[number])
       );
-      await updateCourierAvailability(token, { status: hasActiveDelivery ? 'BUSY' : 'AVAILABLE' });
+      try {
+        await updateCourierAvailability(token, { status: hasActiveDelivery ? 'BUSY' : 'AVAILABLE' });
+      } catch (availabilityError) {
+        setProfileError(
+          availabilityError instanceof Error
+            ? availabilityError.message
+            : 'Configura Stripe Connect antes de recibir pedidos.'
+        );
+      }
 
       setDeliveryOffers(offers);
       setAssignedOrders(assigned);
       setStripeProfile(courierStripeProfile);
+      setWallet(courierWallet);
       const active = assigned.filter((order) =>
         ACTIVE_PARTIAL_DELIVERY_STATUSES.includes(order.status as typeof ACTIVE_PARTIAL_DELIVERY_STATUSES[number])
       );
@@ -219,7 +244,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
 
         const permission = await Location.requestForegroundPermissionsAsync();
         if (permission.status !== 'granted') {
-          setError('Permite la ubicacion para compartirla con el cliente durante la entrega');
+          setError('Permite la ubicación para compartirla con el cliente durante la entrega');
           return;
         }
 
@@ -245,7 +270,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
           }
         );
       } catch {
-        setError('No se pudo iniciar el seguimiento de ubicacion.');
+        setError('No se pudo iniciar el seguimiento de ubicación.');
       }
     }
 
@@ -264,7 +289,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
       const token = await getToken();
 
       if (!token) {
-        setError('Necesitas iniciar sesion para actualizar pedidos');
+        setError('Necesitas iniciar sesión para actualizar pedidos');
         return;
       }
 
@@ -336,7 +361,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
     }
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
-      setProfileError('Correo invalido.');
+      setProfileError('Correo inválido.');
       return;
     }
 
@@ -371,7 +396,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
     const token = await getToken();
 
     if (!token) {
-      setProfileError('Tu sesion expiro. Inicia sesion nuevamente.');
+      setProfileError('Tu sesión expiró. Inicia sesión nuevamente.');
       return;
     }
 
@@ -400,7 +425,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
     const token = await getToken();
 
     if (!token) {
-      setProfileError('Tu sesion expiro. Inicia sesion nuevamente.');
+      setProfileError('Tu sesión expiró. Inicia sesión nuevamente.');
       return;
     }
 
@@ -413,12 +438,118 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
       setProfileError(
         profile.stripePayoutsEnabled
           ? null
-          : 'Tu configuracion de Stripe aun esta pendiente.'
+          : 'Tu configuración de Stripe aún está pendiente.'
       );
     } catch (stripeError) {
       setProfileError(stripeError instanceof Error ? stripeError.message : 'No se pudo actualizar Stripe Connect.');
     } finally {
       setIsUpdatingStripe(false);
+    }
+  }
+
+  async function handleCreateTopUp() {
+    const token = await getToken();
+
+    if (!token) {
+      setWalletError('Tu sesión expiró. Inicia sesión nuevamente.');
+      return;
+    }
+
+    const amountCents = Math.round(Number(topUpAmount) * 100);
+
+    if (!Number.isFinite(amountCents) || amountCents < 20000) {
+      setWalletError('El depósito mínimo es de $200.00 MXN.');
+      return;
+    }
+
+    setIsCreatingTopUp(true);
+    setWalletError(null);
+
+    try {
+      const topUp = await createCourierWalletTopUp(token, amountCents);
+      setLastTopUpId(topUp.id);
+
+      const checkoutUrl = topUp.checkoutUrl ?? topUp.clientSecret;
+
+      if (!checkoutUrl) {
+        throw new Error('Stripe no regresó una liga de pago.');
+      }
+
+      const canOpen = await Linking.canOpenURL(checkoutUrl);
+
+      if (!canOpen) {
+        throw new Error('No se pudo abrir Stripe en este dispositivo.');
+      }
+
+      await Linking.openURL(checkoutUrl);
+    } catch (topUpError) {
+      setWalletError(topUpError instanceof Error ? topUpError.message : 'No se pudo iniciar el depósito.');
+    } finally {
+      setIsCreatingTopUp(false);
+    }
+  }
+
+  async function handleSyncLastTopUp() {
+    const token = await getToken();
+
+    if (!token || !lastTopUpId) {
+      await loadOrders();
+      return;
+    }
+
+    setIsSyncingTopUp(true);
+    setWalletError(null);
+
+    try {
+      await syncCourierWalletTopUp(token, lastTopUpId);
+      const nextWallet = await fetchCourierWallet(token);
+      setWallet(nextWallet);
+      setWalletError(null);
+    } catch (syncError) {
+      setWalletError(syncError instanceof Error ? syncError.message : 'No se pudo actualizar el depósito.');
+    } finally {
+      setIsSyncingTopUp(false);
+    }
+  }
+
+  async function handleWithdrawWallet() {
+    const token = await getToken();
+
+    if (!token) {
+      setWalletError('Tu sesión expiró. Inicia sesión nuevamente.');
+      return;
+    }
+
+    if (!stripeReady) {
+      setWalletError('Configura Stripe Connect en Perfil antes de retirar tu depósito.');
+      return;
+    }
+
+    const amountCents = Math.round(Number(withdrawAmount) * 100);
+    const availableCents = wallet?.availableCents ?? 0;
+
+    if (!Number.isFinite(amountCents) || amountCents <= 0) {
+      setWalletError('Escribe un monto válido para retirar.');
+      return;
+    }
+
+    if (amountCents > availableCents) {
+      setWalletError(`Solo puedes retirar tu saldo disponible: ${formatMoney(availableCents)}.`);
+      return;
+    }
+
+    setIsWithdrawing(true);
+    setWalletError(null);
+
+    try {
+      await createCourierWalletWithdrawal(token, amountCents);
+      const nextWallet = await fetchCourierWallet(token);
+      setWallet(nextWallet);
+      setWithdrawAmount('');
+    } catch (withdrawError) {
+      setWalletError(withdrawError instanceof Error ? withdrawError.message : 'No se pudo retirar el depósito.');
+    } finally {
+      setIsWithdrawing(false);
     }
   }
 
@@ -433,7 +564,11 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
     const routeDestination = getRouteDestination(item, businessLocation, customerLocation);
     const hasCollectableBusinessOrder = businessOrders.some((order) => ['ASSIGNED', 'READY'].includes(order.status));
     const allBusinessOrdersPickedUp = businessOrders.length > 0 && businessOrders.every((order) => order.status === 'PICKED_UP');
+    const isHistoryItem = item.listMode === 'history';
+    const isNotCompletedHistoryItem = isHistoryItem && item.status !== 'DELIVERED';
     const payoutCopy = payoutStatusCopy(item);
+    const cashSettlementRequiredCents =
+      item.cashSettlementRequiredCents ?? Math.max(0, item.totalCents - (item.courierPayoutCents ?? 0));
     const nextLabel = hasCollectableBusinessOrder
       ? isMultiBusinessOrder
         ? ''
@@ -447,7 +582,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
       <View style={styles.card}>
         <View style={styles.cardHeader}>
           <View>
-            <Text style={styles.orderId}>Numero de pedido RAP-{item.id.slice(0, 8).toUpperCase()}</Text>
+            <Text style={styles.orderId}>Número de pedido RAP-{item.id.slice(0, 8).toUpperCase()}</Text>
             <Text style={styles.orderStatus}>
               {item.listMode === 'offer'
                 ? `Oferta sugerida (${item.offerScore ?? 0})`
@@ -458,16 +593,24 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
             styles.statusBadge,
             item.listMode === 'offer' && styles.offerBadge,
             item.status === 'DELIVERED' && styles.deliveredBadge,
+            isNotCompletedHistoryItem && styles.notCompletedBadge,
           ]}>
             <Text style={[
               styles.statusBadgeText,
               item.listMode === 'offer' && styles.offerBadgeText,
               item.status === 'DELIVERED' && styles.deliveredBadgeText,
+              isNotCompletedHistoryItem && styles.notCompletedBadgeText,
             ]}>
               {item.listMode === 'offer' ? 'Nueva' : formatStatus(item.status)}
             </Text>
           </View>
         </View>
+        {isNotCompletedHistoryItem ? (
+          <View style={styles.historyNotice}>
+            <Text style={styles.historyNoticeTitle}>Pedido no completado</Text>
+            <Text style={styles.historyNoticeText}>Este pedido terminó como {formatStatus(item.status).toLowerCase()} y ya no requiere acción.</Text>
+          </View>
+        ) : null}
         <View style={[styles.flowNotice, isMultiBusinessOrder && styles.multiFlowNotice]}>
           <Text style={styles.flowTitle}>{flowCopy.title}</Text>
           <Text style={styles.flowBody}>{flowCopy.body}</Text>
@@ -479,7 +622,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
         </Text>
         <Text style={styles.orderMeta}>Entregar en: {item.deliveryAddress}</Text>
         {item.customerName ? <Text style={styles.orderMeta}>Cliente: {item.customerName}</Text> : null}
-        {item.customerPhone && item.status !== 'DELIVERED' ? (
+        {item.customerPhone && !isHistoryItem && item.status !== 'DELIVERED' ? (
           <TouchableOpacity onPress={() => callCustomer(item.customerPhone!)} style={styles.phoneButton}>
             <Text style={styles.phoneText}>Marcar: {item.customerPhone}</Text>
           </TouchableOpacity>
@@ -515,10 +658,13 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
           <View style={styles.cashPanel}>
             <Text style={styles.cashTitle}>Pago en efectivo</Text>
             <Text style={styles.cashText}>
-              Cobrar: ${(item.totalCents / 100).toFixed(2)}
+              Cobra al cliente: ${(item.totalCents / 100).toFixed(2)}
               {item.paymentStatus === 'PAID' && item.cashReceivedCents !== null && item.cashReceivedCents !== undefined
                 ? ` - Recibido: $${(item.cashReceivedCents / 100).toFixed(2)} - Cambio: $${((item.cashChangeCents ?? 0) / 100).toFixed(2)}`
                 : ''}
+            </Text>
+            <Text style={styles.cashText}>
+              Se descontará de tu depósito RapiV: {formatMoney(cashSettlementRequiredCents)}. Tu ganancia queda como {formatMoney(item.courierPayoutCents ?? 0)}.
             </Text>
             {item.status === 'ON_THE_WAY' && item.paymentStatus !== 'PAID' ? (
               <>
@@ -563,7 +709,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
                   <View style={styles.pickupHeader}>
                     <View style={styles.pickupTextGroup}>
                       <Text style={styles.pickupTitle}>Comercio {index + 1} - {formatStatus(businessOrder.status)}</Text>
-                      <Text style={styles.pickupAddress}>{businessOrder.businessAddress ?? 'Direccion no disponible'}</Text>
+                      <Text style={styles.pickupAddress}>{businessOrder.businessAddress ?? 'Dirección no disponible'}</Text>
                     </View>
                     <View style={styles.pickupActions}>
                       {businessPoint ? (
@@ -596,7 +742,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
           </>
         ) : null}
 
-        <Text style={styles.sectionTitle}>Articulos</Text>
+        <Text style={styles.sectionTitle}>Artículos</Text>
         {orderItems.length > 0 ? (
           orderItems.map((product) => (
             <Text key={`${item.id}-${product.productId}`} style={styles.orderItem}>
@@ -642,7 +788,9 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
               {mutatingOrderId === item.id
                 ? 'Actualizando...'
                 : item.listMode === 'offer'
-                  ? 'Aceptar oferta'
+                  ? 'Aceptar pedido'
+                  : item.paymentMethod === 'CASH' && item.status === 'ON_THE_WAY'
+                    ? 'Cobrar y pagar orden'
                   : nextLabel}
             </Text>
           </TouchableOpacity>
@@ -651,25 +799,25 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
     );
   }
 
-  const activeOrders = assignedOrders.filter((order) => order.status !== 'DELIVERED');
-  const deliveredOrders = assignedOrders.filter((order) => order.status === 'DELIVERED');
+  const activeOrders = assignedOrders.filter((order) => !isTerminalDeliveryStatus(order.status));
+  const terminalOrders = assignedOrders.filter((order) => isTerminalDeliveryStatus(order.status));
+  const deliveredOrders = terminalOrders.filter((order) => order.status === 'DELIVERED');
+  const notCompletedOrders = terminalOrders.filter((order) => order.status !== 'DELIVERED');
   const listedOrders: ListedOrder[] = [
     ...activeOrders.map((order) => ({ ...order, listMode: 'assigned' as const })),
-    ...deliveryOffers.map((offer) => ({
-      ...offer.order,
-      listMode: 'offer' as const,
-      offerId: offer.id,
-      offerScore: offer.score,
-    })),
+    ...deliveryOffers
+      .filter((offer) => !isTerminalDeliveryStatus(offer.order.status))
+      .map((offer) => ({
+        ...offer.order,
+        listMode: 'offer' as const,
+        offerId: offer.id,
+        offerScore: offer.score,
+      })),
   ];
-  const historyOrders: ListedOrder[] = deliveredOrders.map((order) => ({
+  const historyOrders: ListedOrder[] = terminalOrders.map((order) => ({
     ...order,
     listMode: 'history' as const,
   }));
-  const totalDeliveredCents = useMemo(
-    () => deliveredOrders.reduce((sum, order) => sum + order.totalCents, 0),
-    [deliveredOrders]
-  );
   const deliveredPayoutCents = useMemo(
     () => deliveredOrders.reduce((sum, order) => sum + (order.courierPayoutCents ?? 0), 0),
     [deliveredOrders]
@@ -694,15 +842,20 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
   function renderHeader() {
     return (
       <View style={styles.header}>
-        <View>
-          <Text style={styles.eyebrow}>RapiV Repartidor</Text>
-          <Text style={styles.title}>
-            {activeTab === 'work'
-              ? 'Entregas'
-              : activeTab === 'history'
-                ? 'Historial'
-                : 'Perfil'}
-          </Text>
+        <View style={styles.headerTitleRow}>
+          <Image source={require("../../../assets/icon.png")} style={styles.headerLogo} />
+          <View>
+            <Text style={styles.eyebrow}>RapiV Repartidor</Text>
+            <Text style={styles.title}>
+              {activeTab === 'work'
+                ? 'Entregas'
+                : activeTab === 'wallet'
+                  ? 'Depósitos'
+                : activeTab === 'history'
+                  ? 'Historial'
+                  : 'Perfil'}
+            </Text>
+          </View>
         </View>
         <TouchableOpacity onPress={refreshOrders} style={styles.refreshButton}>
           <Ionicons name="refresh" size={20} color={colors.primary} />
@@ -722,7 +875,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
           actionLabel="Reintentar"
           message={error}
           onAction={loadOrders}
-          title={error.includes('Sin conexion') ? 'Sin conexion' : 'No pudimos cargar los pedidos'}
+          title={error.includes('Sin conexion') ? 'Sin conexión' : 'No pudimos cargar los pedidos'}
           type="error"
         />
       );
@@ -732,7 +885,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
       return (
         <StateView
           actionLabel="Actualizar"
-          message="Cuando el sistema te recomiende un pedido por zona y disponibilidad, aparecera aqui."
+          message="Cuando el sistema te recomiende un pedido por zona y disponibilidad, aparecerá aquí."
           onAction={loadOrders}
           title="No tienes ofertas disponibles"
         />
@@ -746,17 +899,165 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
         contentContainerStyle={styles.list}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshOrders} />}
         ListHeaderComponent={
-          !stripeReady ? (
-            <View style={styles.stripeWorkNotice}>
-              <Ionicons name="alert-circle-outline" size={19} color="#92400E" />
-              <Text style={styles.stripeWorkNoticeText}>
-                Configura Stripe Connect en Perfil para recibir transferencias automaticas de tus entregas.
-              </Text>
-            </View>
-          ) : null
+          <>
+            {!stripeReady ? (
+              <View style={styles.stripeWorkNotice}>
+                <Ionicons name="alert-circle-outline" size={19} color="#92400E" />
+                <Text style={styles.stripeWorkNoticeText}>
+                  Configura Stripe Connect en Perfil para recibir transferencias y ofertas.
+                </Text>
+              </View>
+            ) : null}
+            {wallet ? (
+              <View style={styles.walletWorkNotice}>
+                <View>
+                  <Text style={styles.walletWorkLabel}>Depósito disponible para efectivo</Text>
+                  <Text style={styles.walletWorkAmount}>{formatMoney(wallet.availableCents)}</Text>
+                  <Text style={styles.walletWorkDetail}>
+                    Lo necesitas para tomar pedidos pagados en efectivo.
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => setActiveTab('wallet')} style={styles.walletWorkButton}>
+                  <Text style={styles.walletWorkButtonText}>Depositar</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.walletSetupNotice}>
+                <Ionicons name="wallet-outline" size={20} color={colors.primary} />
+                <View style={styles.infoTextBlock}>
+                  <Text style={styles.walletSetupTitle}>Depósito para recibir pedidos en efectivo</Text>
+                  <Text style={styles.walletSetupText}>
+                    Recarga tu depósito RapiV para cubrir órdenes en efectivo y poder recibir más ofertas.
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => setActiveTab('wallet')} style={styles.walletSetupButton}>
+                  <Text style={styles.walletSetupButtonText}>Ver</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </>
         }
         renderItem={({ item }) => renderOrder(item)}
       />
+    );
+  }
+
+  function renderWalletTab() {
+    const recentTransactions = wallet?.recentTransactions ?? [];
+
+    return (
+      <ScrollView
+        contentContainerStyle={styles.profileContent}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshOrders} />}
+      >
+        <View style={styles.walletBalanceCard}>
+          <Text style={styles.walletLabel}>Depósito RapiV</Text>
+          <Text style={styles.walletBalance}>{formatMoney(wallet?.balanceCents ?? 0)}</Text>
+          <Text style={styles.walletDetail}>
+            Disponible para pedidos en efectivo: {formatMoney(wallet?.availableCents ?? 0)}
+          </Text>
+          {wallet?.activeCashCommitmentCents ? (
+            <Text style={styles.walletDetail}>
+              Comprometido en entregas activas: {formatMoney(wallet.activeCashCommitmentCents)}
+            </Text>
+          ) : null}
+        </View>
+
+        <View style={styles.infoCard}>
+          <Text style={styles.infoTitle}>Hacer depósito</Text>
+          <Text style={styles.infoText}>
+            Este depósito se usa para cubrir a RapiV las órdenes en efectivo cuando las entregas.
+            Mientras más depósito disponible tengas, más pedidos en efectivo podrás recibir.
+          </Text>
+          <TextInput
+            keyboardType="decimal-pad"
+            onChangeText={setTopUpAmount}
+            placeholder="Monto del depósito"
+            placeholderTextColor={colors.muted}
+            style={styles.profileInput}
+            value={topUpAmount}
+          />
+          <TouchableOpacity
+            disabled={isCreatingTopUp}
+            onPress={handleCreateTopUp}
+            style={[styles.saveProfileButton, isCreatingTopUp && styles.disabledButton]}
+          >
+            <Text style={styles.saveProfileText}>{isCreatingTopUp ? 'Abriendo Stripe...' : 'Depositar con Stripe'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            disabled={isSyncingTopUp}
+            onPress={handleSyncLastTopUp}
+            style={[styles.stripeButtonSecondary, styles.walletSyncButton, isSyncingTopUp && styles.disabledButton]}
+          >
+            <Text style={styles.stripeButtonSecondaryText}>
+              {isSyncingTopUp ? 'Actualizando...' : 'Actualizar depósito'}
+            </Text>
+          </TouchableOpacity>
+          {walletError ? <Text style={styles.profileError}>{walletError}</Text> : null}
+        </View>
+
+        <View style={styles.infoCard}>
+          <Text style={styles.infoTitle}>Retirar depósito</Text>
+          <Text style={styles.infoText}>
+            Puedes retirar el saldo disponible a tu cuenta de Stripe Connect. El saldo comprometido en entregas activas no se puede retirar.
+          </Text>
+          <TextInput
+            keyboardType="decimal-pad"
+            onChangeText={setWithdrawAmount}
+            placeholder="Monto a retirar"
+            placeholderTextColor={colors.muted}
+            style={styles.profileInput}
+            value={withdrawAmount}
+          />
+          <TouchableOpacity
+            disabled={isWithdrawing || !stripeReady || (wallet?.availableCents ?? 0) <= 0}
+            onPress={handleWithdrawWallet}
+            style={[
+              styles.withdrawButton,
+              (isWithdrawing || !stripeReady || (wallet?.availableCents ?? 0) <= 0) && styles.disabledButton
+            ]}
+          >
+            <Text style={styles.withdrawButtonText}>
+              {isWithdrawing ? 'Retirando...' : 'Retirar a Stripe'}
+            </Text>
+          </TouchableOpacity>
+          {!stripeReady ? (
+            <Text style={styles.infoText}>Activa Stripe Connect en Perfil para retirar tu depósito.</Text>
+          ) : null}
+        </View>
+
+        <View style={styles.infoCard}>
+          <Text style={styles.infoTitle}>Movimientos recientes</Text>
+          {recentTransactions.length ? (
+            recentTransactions.map((transaction) => (
+              <View key={transaction.id} style={styles.walletTransactionRow}>
+                <View style={styles.infoTextBlock}>
+                  <Text style={styles.walletTransactionTitle}>
+                    {transaction.type === 'TOP_UP'
+                      ? 'Depósito'
+                      : transaction.type === 'CASH_ORDER_SETTLEMENT'
+                        ? 'Orden en efectivo'
+                        : transaction.type === 'WITHDRAWAL'
+                          ? 'Retiro'
+                          : 'Ajuste'}
+                  </Text>
+                  <Text style={styles.infoText}>
+                    {new Date(transaction.createdAt).toLocaleString('es-MX')}
+                  </Text>
+                </View>
+                <Text style={[
+                  styles.walletTransactionAmount,
+                  transaction.amountCents >= 0 ? styles.walletTransactionPositive : styles.walletTransactionNegative,
+                ]}>
+                  {transaction.amountCents >= 0 ? '+' : ''}{formatMoney(transaction.amountCents)}
+                </Text>
+              </View>
+            ))
+          ) : (
+            <Text style={styles.infoText}>Aún no tienes movimientos de depósito.</Text>
+          )}
+        </View>
+      </ScrollView>
     );
   }
 
@@ -769,9 +1070,9 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
       return (
         <StateView
           actionLabel="Actualizar"
-          message="Tus pedidos entregados apareceran aqui cuando completes tus primeras entregas."
+          message="Tus pedidos entregados, cancelados o no completados aparecerán aquí."
           onAction={loadOrders}
-          title="Aun no tienes entregas completadas"
+          title="Aún no tienes entregas completadas"
         />
       );
     }
@@ -791,10 +1092,10 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
     const stripeStatusLabel = stripeReady
       ? 'Stripe Connect listo'
       : stripeProfile?.stripeConnectedAccountId
-        ? 'Configuracion pendiente en Stripe'
+        ? 'Configuración pendiente en Stripe'
         : 'Stripe Connect no configurado';
     const stripeStatusDescription = stripeReady
-      ? 'Los pagos de reparto se podran enviar a tu cuenta conectada.'
+      ? 'Los pagos de reparto se podrán enviar a tu cuenta conectada.'
       : 'Completa Stripe Connect para que RapiV pueda pagarte tus entregas. Tus datos bancarios se capturan directamente en Stripe.';
 
     return (
@@ -883,7 +1184,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
           ) : (
             <>
               <Text style={styles.infoText}>Usuario: {user?.username ?? 'Sin usuario'}</Text>
-              <Text style={styles.infoText}>Telefono: {user?.phone ?? 'Sin telefono'}</Text>
+              <Text style={styles.infoText}>Teléfono: {user?.phone ?? 'Sin teléfono'}</Text>
             </>
           )}
         </View>
@@ -898,12 +1199,16 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
             <Text style={styles.metricLabel}>Entregadas</Text>
           </View>
           <View style={styles.metricCard}>
-            <Text style={styles.metricValue}>{formatMoney(deliveredPayoutCents)}</Text>
-            <Text style={styles.metricLabel}>Ganado</Text>
+            <Text style={styles.metricValue}>{notCompletedOrders.length}</Text>
+            <Text style={styles.metricLabel}>No completadas</Text>
           </View>
         </View>
 
         <View style={styles.metricsGrid}>
+          <View style={styles.metricCard}>
+            <Text style={styles.metricValue}>{formatMoney(deliveredPayoutCents)}</Text>
+            <Text style={styles.metricLabel}>Ganado</Text>
+          </View>
           <View style={styles.metricCard}>
             <Text style={styles.metricValue}>{formatMoney(paidPayoutCents)}</Text>
             <Text style={styles.metricLabel}>Pagado</Text>
@@ -912,10 +1217,6 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
             <Text style={styles.metricValue}>{formatMoney(pendingPayoutCents)}</Text>
             <Text style={styles.metricLabel}>Pendiente</Text>
           </View>
-          <View style={styles.metricCard}>
-            <Text style={styles.metricValue}>${(totalDeliveredCents / 100).toFixed(0)}</Text>
-            <Text style={styles.metricLabel}>Valor entregado</Text>
-          </View>
         </View>
 
         <View style={styles.infoCard}>
@@ -923,7 +1224,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
             <Ionicons name="star-outline" size={20} color={colors.primary} />
             <View style={styles.infoTextBlock}>
               <Text style={styles.infoTitle}>Valoraciones</Text>
-              <Text style={styles.infoText}>Aun no hay calificaciones para mostrar.</Text>
+              <Text style={styles.infoText}>Aún no hay calificaciones para mostrar.</Text>
             </View>
           </View>
           <View style={styles.infoRow}>
@@ -937,7 +1238,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
 
         <TouchableOpacity onPress={onLogout} style={styles.logoutButton}>
           <Ionicons name="log-out-outline" size={19} color="#B91C1C" />
-          <Text style={styles.logoutText}>Cerrar sesion</Text>
+          <Text style={styles.logoutText}>Cerrar sesión</Text>
         </TouchableOpacity>
       </ScrollView>
     );
@@ -946,6 +1247,10 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
   function renderCurrentTab() {
     if (activeTab === 'history') {
       return renderHistoryTab();
+    }
+
+    if (activeTab === 'wallet') {
+      return renderWalletTab();
     }
 
     if (activeTab === 'profile') {
@@ -976,6 +1281,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
       <View style={styles.content}>{renderCurrentTab()}</View>
       <View style={[styles.tabBar, { paddingBottom: Math.max(insets.bottom, 10) }]}>
         {renderTabButton('work', 'bicycle-outline', 'Entregas')}
+        {renderTabButton('wallet', 'wallet-outline', 'Depósitos')}
         {renderTabButton('history', 'receipt-outline', 'Historial')}
         {renderTabButton('profile', 'person-outline', 'Perfil')}
       </View>

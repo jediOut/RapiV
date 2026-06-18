@@ -8,7 +8,7 @@ import {
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { randomUUID } from "node:crypto";
-import { DataSource, EntityManager, LessThanOrEqual, MoreThan, Repository } from "typeorm";
+import { DataSource, EntityManager, Repository } from "typeorm";
 
 import { BusinessesService } from "../businesses/businesses.service";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -34,9 +34,9 @@ import { CourierProfile } from "../users/courier-profile.entity";
 import { assertInsideVegaServiceaddress } from "src/common/geo/vega-zone";
 import { MonitoringService } from "../monitoring/monitoring.service";
 import { Payment } from "../payments/payment.entity";
-import { CashSettlement } from "../payments/cash-settlement.entity";
 import { PaymentProcessingQueue } from "../payments/payment-processing.queue";
 import { PaymentProviderService, ProviderTransfer } from "../payments/payment-provider.service";
+import { CourierWalletService } from "../payments/courier-wallet.service";
 import { StripeConnectService } from "../stripe-connect/stripe-connect.service";
 import type { OrderLifecycleJob } from "./order-processing.queue";
 
@@ -71,8 +71,6 @@ export class OrdersService {
     private readonly courierProfileRepository: Repository<CourierProfile>,
     @InjectRepository(Payment)
     private readonly paymentRepository: Repository<Payment>,
-    @InjectRepository(CashSettlement)
-    private readonly cashSettlementRepository: Repository<CashSettlement>,
     private readonly dataSource: DataSource,
     private readonly businessesService: BusinessesService,
     private readonly orderProcessingQueue: OrderProcessingQueue,
@@ -80,6 +78,7 @@ export class OrdersService {
     private readonly paymentProviderService: PaymentProviderService,
     private readonly paymentProcessingQueue: PaymentProcessingQueue,
     private readonly stripeConnectService: StripeConnectService,
+    private readonly courierWalletService: CourierWalletService,
     @Optional()
     private readonly monitoring?: MonitoringService
   ) { }
@@ -234,7 +233,12 @@ export class OrdersService {
             platformDeliveryMarginCents: shouldAttachDeliveryFinancials ? platformDeliveryMarginCents : 0,
             businessCommissionCents,
             businessPayoutCents,
-            businessCashPayoutStatus: paymentMethod === "CASH" && businessPayoutCents > 0 ? "PENDING" : "NOT_APPLICABLE",
+            businessCashPayoutStatus:
+              paymentMethod === "CASH" &&
+                fulfillmentMethod === "PICKUP" &&
+                businessPayoutCents > 0
+                ? "PENDING"
+                : "NOT_APPLICABLE",
             totalPrice: (subtotalCents + (shouldAttachDeliveryFinancials ? deliveryFeeCents : 0)) / 100,
             deliveryAddress: dto.deliveryAddress.trim(),
             customerLatitude: fulfillmentMethod === "DELIVERY" ? dto.latitude : null,
@@ -353,7 +357,16 @@ export class OrdersService {
       order: { createdAt: "DESC" }
     });
     const groups = this.groupOrders(orders);
-    const readyGroups = groups.filter((groupOrders) => this.hasCollectableOrders(groupOrders));
+    const readyGroups: Order[][] = [];
+
+    for (const groupOrders of groups) {
+      if (
+        this.hasCollectableOrders(groupOrders) &&
+        await this.hasCashCapacityForOrders(courierId, groupOrders)
+      ) {
+        readyGroups.push(groupOrders);
+      }
+    }
 
     return Promise.all(
       readyGroups.map(async (groupOrders) => {
@@ -666,7 +679,10 @@ export class OrdersService {
 
         const courierOrder = await this.attachCustomerDetails(this.mapCourierOrderGroup(orders));
 
-        if (this.hasCollectableOrders(orders)) {
+        if (
+          this.hasCollectableOrders(orders) &&
+          await this.hasCashCapacityForOrders(courierId, orders)
+        ) {
           summaries.push({
             id: offer.id,
             status: offer.status,
@@ -829,6 +845,8 @@ export class OrdersService {
         throw new ConflictException("Order is no longer ready for pickup");
       }
 
+      await this.courierWalletService.assertCanCoverCashOrders(courierId, orders, manager);
+
       if (orders.some((order) => order.courierId && order.courierId !== courierId)) {
         offer.status = "CANCELLED";
         await manager.save(DeliveryOffer, offer);
@@ -906,6 +924,8 @@ export class OrdersService {
         throw new ConflictException("Order is not ready for pickup");
       }
 
+      await this.courierWalletService.assertCanCoverCashOrders(courierId, orders, manager);
+
       if (orders.some((order) => order.courierId && order.courierId !== courierId)) {
         throw new ConflictException("Order is already assigned to another courier");
       }
@@ -979,6 +999,7 @@ export class OrdersService {
           order.cashCollectedAt = cashCollectedAt;
           order.paymentStatus = "PAID";
           order.paidAt = cashCollectedAt;
+          order.businessCashPayoutStatus = "NOT_APPLICABLE";
         }
 
         if (
@@ -997,6 +1018,21 @@ export class OrdersService {
       }
 
       await manager.save(Order, orders);
+
+      if (cashCollectedAt) {
+        const walletTransaction = await this.courierWalletService.debitCashOrderSettlement(
+          courierId,
+          orders,
+          manager,
+          { cashReceivedCents }
+        );
+        this.monitoring?.recordPaymentEvent("courier_wallet_cash_order_settled", {
+          orderGroupId,
+          courierId,
+          amountCents: walletTransaction ? Math.abs(walletTransaction.amountCents) : 0
+        });
+      }
+
       this.monitoring?.recordOrderEvent("courier_status_updated", {
         orderGroupId,
         courierId,
@@ -1035,10 +1071,6 @@ export class OrdersService {
 
       if (shouldEnqueueCourierPayout) {
         await this.paymentProcessingQueue.addCourierPayout(orderGroupId);
-      }
-
-      if (cashCollectedAt) {
-        await this.notifyBusinessesCashPayoutPending(orders);
       }
 
       return this.attachCustomerDetails(this.mapCourierOrderGroup(orders));
@@ -1283,6 +1315,7 @@ export class OrdersService {
       courierPayoutFailedAt: courierPayoutOrder?.courierPayoutFailedAt,
       courierPayoutError: courierPayoutOrder?.courierPayoutError,
       platformDeliveryMarginCents: orders.reduce((sum, order) => sum + Number(order.platformDeliveryMarginCents ?? 0), 0),
+      cashSettlementRequiredCents: this.courierWalletService.cashSettlementRequiredCents(orders),
       createdAt: firstOrder.createdAt,
       courierId: firstOrder.courierId,
       paymentMethod: firstOrder.paymentMethod,
@@ -2126,8 +2159,16 @@ export class OrdersService {
       .sort((a, b) => b.score - a.score)
       .slice(0, 5);
 
+    const eligibleScoredCandidates = [];
+
+    for (const candidate of scoredCandidates) {
+      if (await this.hasCashCapacityForOrders(candidate.profile.userId, orders)) {
+        eligibleScoredCandidates.push(candidate);
+      }
+    }
+
     const expiresAt = new Date(Date.now() + this.deliveryOfferTtlMs());
-    const offers = scoredCandidates.map((candidate) =>
+    const offers = eligibleScoredCandidates.map((candidate) =>
       this.deliveryOfferRepository.create({
         orderGroupId,
         courierId: candidate.profile.userId,
@@ -2220,80 +2261,49 @@ export class OrdersService {
   }
 
   private async assertCourierCanReceiveNewOrders(courierId: string): Promise<void> {
+    const profile = await this.ensureCourierProfile(courierId);
+
+    if (!profile.stripeConnectedAccountId || !profile.stripePayoutsEnabled) {
+      throw new ConflictException(
+        "Configura Stripe Connect en tu perfil antes de recibir pedidos."
+      );
+    }
+
     if (await this.isCourierBlockedFromNewOrders(courierId)) {
       throw new ConflictException(
-        "Tienes dinero pendiente por liquidar. Entregalo para recibir nuevos pedidos."
+        "Configura Stripe Connect en tu perfil antes de recibir pedidos."
       );
     }
   }
 
   private async isCourierBlockedFromNewOrders(courierId: string): Promise<boolean> {
-    const settlement = await this.cashSettlementRepository.findOne({
-      where: {
-        courierId,
-        status: "PENDING",
-        netDueToRapivCents: MoreThan(0),
-        periodEndAt: LessThanOrEqual(this.cashSettlementBlockThreshold())
-      }
+    const profile = await this.courierProfileRepository.findOne({
+      where: { userId: courierId }
     });
 
-    if (settlement) {
-      return true;
-    }
-
-    const pendingBusinessPayout = await this.orderRepository.findOne({
-      where: {
-        courierId,
-        paymentMethod: "CASH",
-        paymentStatus: "PAID",
-        status: "DELIVERED",
-        businessCashPayoutStatus: "PENDING",
-        businessPayoutCents: MoreThan(0),
-        cashCollectedAt: LessThanOrEqual(this.businessCashPayoutBlockThreshold())
-      }
-    });
-
-    return Boolean(pendingBusinessPayout);
+    return !profile || !profile.stripeConnectedAccountId || !profile.stripePayoutsEnabled;
   }
 
   private async blockedCourierIdsForNewOrders(): Promise<Set<string>> {
-    const settlements = await this.cashSettlementRepository.find({
-      where: {
-        status: "PENDING",
-        netDueToRapivCents: MoreThan(0),
-        periodEndAt: LessThanOrEqual(this.cashSettlementBlockThreshold())
-      }
-    });
+    const profiles = await this.courierProfileRepository.find();
+    return new Set(
+      profiles
+        .filter((profile) => !profile.stripeConnectedAccountId || !profile.stripePayoutsEnabled)
+        .map((profile) => profile.userId)
+    );
+  }
 
-    const blockedCourierIds = new Set(settlements.map((settlement) => settlement.courierId));
-    const pendingBusinessPayouts = await this.orderRepository.find({
-      where: {
-        paymentMethod: "CASH",
-        paymentStatus: "PAID",
-        status: "DELIVERED",
-        businessCashPayoutStatus: "PENDING",
-        businessPayoutCents: MoreThan(0),
-        cashCollectedAt: LessThanOrEqual(this.businessCashPayoutBlockThreshold())
+  private async hasCashCapacityForOrders(courierId: string, orders: Order[]): Promise<boolean> {
+    try {
+      await this.courierWalletService.assertCanCoverCashOrders(courierId, orders);
+      return true;
+    } catch (error) {
+      if (error instanceof ConflictException) {
+        return false;
       }
-    });
 
-    for (const order of pendingBusinessPayouts) {
-      if (order.courierId) {
-        blockedCourierIds.add(order.courierId);
-      }
+      throw error;
     }
-
-    return blockedCourierIds;
-  }
-
-  private cashSettlementBlockThreshold(): Date {
-    const graceMs = this.nonNegativeIntegerEnv("CASH_SETTLEMENT_GRACE_MINUTES", 30) * 60_000;
-    return new Date(Date.now() - graceMs);
-  }
-
-  private businessCashPayoutBlockThreshold(): Date {
-    const timeoutMs = this.nonNegativeIntegerEnv("BUSINESS_CASH_PAYOUT_TIMEOUT_MINUTES", 120) * 60_000;
-    return new Date(Date.now() - timeoutMs);
   }
 
   private formatMoney(cents: number): string {

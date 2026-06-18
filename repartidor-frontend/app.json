@@ -2,7 +2,7 @@
   "expo": {
     "name": "RapiV Repartidor",
     "slug": "rapiv-repartidor",
-    "version": "1.0.0",
+    "version": "1.0.3",
     "orientation": "portrait",
     "scheme": [
       "rapiv-repartidor",
@@ -21,9 +21,9 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.rapiv.courier",
-      "buildNumber": "1",
+      "buildNumber": "5",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "RapiV usa tu ubicacion durante la entrega para mostrar la ruta al cliente."
+        "NSLocationWhenInUseUsageDescription": "RapiV usa tu ubicación durante la entrega para mostrar la ruta al cliente."
       }
     },
     "android": {
@@ -39,7 +39,7 @@
         "backgroundColor": "#EA580C"
       },
       "package": "com.rapiv.courier",
-      "versionCode": 2
+      "versionCode": 5
     },
     "web": {
       "favicon": "./assets/favicon.png"

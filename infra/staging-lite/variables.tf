@@ -48,3 +48,21 @@ variable "media_bucket_name" {
   type        = string
   default     = ""
 }
+
+variable "deploy_artifacts_bucket_name" {
+  description = "S3 bucket for short-lived staging deployment artifacts. Leave empty to generate a unique account-scoped name."
+  type        = string
+  default     = ""
+}
+
+variable "github_repository" {
+  description = "GitHub repository allowed to assume the staging deploy role, in owner/name form."
+  type        = string
+  default     = "jediOut/RapiV"
+}
+
+variable "github_deploy_branch" {
+  description = "GitHub branch allowed to deploy staging through OIDC."
+  type        = string
+  default     = "main"
+}

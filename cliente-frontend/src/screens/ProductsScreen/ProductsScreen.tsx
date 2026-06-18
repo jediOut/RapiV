@@ -81,13 +81,13 @@ export default function ProductsScreen({ navigation, route }: Props) {
       <Header title="Productos" onBackPress={() => navigation.goBack()} />
 
       {loading ? (
-        <StateView title="Cargando productos" message="Estamos consultando el menu del negocio." type="loading" />
+        <StateView title="Cargando productos" message="Estamos consultando el menú del negocio." type="loading" />
       ) : error ? (
         <StateView
           actionLabel="Reintentar"
           message={error}
           onAction={loadProducts}
-          title={error.includes('Sin conexion') ? 'Sin conexion' : 'No pudimos cargar el menu'}
+          title={error.includes('Sin conexion') ? 'Sin conexión' : 'No pudimos cargar el menú'}
           type="error"
         />
       ) : (
@@ -96,7 +96,7 @@ export default function ProductsScreen({ navigation, route }: Props) {
           keyExtractor={(item) => item.id}
           ListEmptyComponent={
             <StateView
-              message="El negocio aun no ha publicado productos para ordenar."
+              message="El negocio aún no ha publicado productos para ordenar."
               title="Negocio sin productos"
             />
           }

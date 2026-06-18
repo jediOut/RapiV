@@ -2,7 +2,7 @@
   "expo": {
     "name": "RapiV Cliente",
     "slug": "rapiv-client",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "orientation": "portrait",
     "scheme": [
       "rapiv",
@@ -21,9 +21,9 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.rapiv.client",
-      "buildNumber": "1",
+      "buildNumber": "3",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "RapiV usa tu ubicacion durante la entrega para que el repartidor pueda llegar contigo.",
+        "NSLocationWhenInUseUsageDescription": "RapiV usa tu ubicación durante la entrega para que el repartidor pueda llegar contigo.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
@@ -40,7 +40,7 @@
         "backgroundColor": "#2563EB"
       },
       "package": "com.rapiv.client",
-      "versionCode": 1
+      "versionCode": 3
     },
     "web": {
       "favicon": "./assets/favicon.png"

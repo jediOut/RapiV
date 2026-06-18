@@ -14,6 +14,8 @@ import { Payment } from '../modules/payments/payment.entity';
 import { Rating } from '../modules/ratings/rating.entity';
 import { CashSettlement } from '../modules/payments/cash-settlement.entity';
 import { BusinessCommissionSettlement } from '../modules/payments/business-commission-settlement.entity';
+import { CourierWalletTopUp } from '../modules/payments/courier-wallet-top-up.entity';
+import { CourierWalletTransaction } from '../modules/payments/courier-wallet-transaction.entity';
 
 function requiredConfig(configService: ConfigService, key: string): string {
   const value = configService.get<string>(key);
@@ -52,6 +54,8 @@ function configValue(configService: ConfigService, key: string, fallbackKey: str
           DeliveryOffer,
           Payment,
           PaymentEvent,
+          CourierWalletTopUp,
+          CourierWalletTransaction,
           CashSettlement,
           BusinessCommissionSettlement,
           Rating

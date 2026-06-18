@@ -22,6 +22,7 @@ Required environment variables:
 - `RAPIV_PLATFORM_FEE_BPS`, card platform fee in basis points, for example `1000` for 10%
 - `RAPIV_CASH_PLATFORM_FEE_BPS`, cash platform fee in basis points, for example `500` for 5%; when omitted, cash uses `RAPIV_PLATFORM_FEE_BPS`
 - `CARD_PAYMENT_MINIMUM_CENTS`, minimum product subtotal required for card orders, default `18000` for MXN 180
+- `COURIER_WALLET_TOPUP_MINIMUM_CENTS`, minimum courier wallet top-up, default `20000` for MXN 200
 - `CASH_SETTLEMENT_CUTOFF_HOUR`, local hour for daily cash settlement cutoffs, default `22`
 - `CASH_SETTLEMENT_CUTOFF_MINUTE`, local minute for daily cash settlement cutoffs, default `0`
 - `CASH_SETTLEMENT_GRACE_MINUTES`, minutes after cutoff before blocking new delivery offers, default `30`
@@ -36,7 +37,7 @@ Required environment variables:
 - `DELIVERY_FEE_CENTS`, fixed customer delivery fee for the order group, for example `3000` for MXN 30
 - `COURIER_PAYOUT_CENTS`, fixed courier payout recorded as pending, for example `2500` for MXN 25
 
-For cash orders, the customer pays the courier at delivery. RapiV commission is discounted from the business payout (`businessPayoutCents = subtotalCents - businessCommissionCents`) so the business receives its net amount without Stripe being involved.
+For delivery cash orders, the customer pays the courier at delivery and the courier pays RapiV from their RapiV wallet during delivery closeout. Couriers only receive cash offers when Stripe Connect payouts are ready and wallet funds cover `order total - courier payout`. The wallet debit leaves the courier with the delivery payout in cash and gives RapiV the business payout plus platform fees to settle operationally.
 
 Daily cash settlement runs after the configured cutoff, for example 10:00 pm. Each courier settlement groups delivered cash order groups for the previous 24-hour cutoff window and records:
 

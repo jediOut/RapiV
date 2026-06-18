@@ -1,5 +1,7 @@
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { MaterialIcons } from '@expo/vector-icons';
 import { useState } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { GoogleSignInButton } from '../../components/GoogleSignInButton';
 import { CURRENT_TERMS_VERSION, CUSTOMER_TERMS_SECTIONS, CUSTOMER_TERMS_TITLE } from '../../config/legal';
@@ -18,15 +20,32 @@ export function LoginScreen({
   onGoogleLogin,
   onGoogleError
 }: LoginScreenProps) {
+  const insets = useSafeAreaInsets();
   const [areTermsVisible, setAreTermsVisible] = useState(false);
 
   return (
     <>
-      <ScrollView contentContainerStyle={loginStyles.container} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        contentContainerStyle={[
+          loginStyles.container,
+          {
+            paddingBottom: Math.max(insets.bottom + 22, 44),
+            paddingTop: Math.max(insets.top + 22, 44),
+          },
+        ]}
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={loginStyles.brandBlock}>
-          <Text style={loginStyles.brand}>RapiV</Text>
+          <View style={loginStyles.logoMark}>
+            <Image source={require("../../../assets/icon.png")} style={loginStyles.logoImage} />
+          </View>
           <Text style={loginStyles.title}>Acceso para clientes</Text>
           <Text style={loginStyles.subtitle}>Entra con Google para ordenar y recibir tu pedido a tiempo.</Text>
+          <View style={loginStyles.benefits}>
+            <Benefit icon="storefront" label="Negocios cercanos" />
+            <Benefit icon="location-on" label="Entrega con ubicación" />
+            <Benefit icon="receipt-long" label="Seguimiento del pedido" />
+          </View>
         </View>
 
         <View style={loginStyles.form}>
@@ -39,7 +58,7 @@ export function LoginScreen({
           <Text style={loginStyles.termsText}>
             Al continuar con Google aceptas los{' '}
             <Text onPress={() => setAreTermsVisible(true)} style={loginStyles.termsLink}>
-              terminos y condiciones
+              términos y condiciones
             </Text>{' '}
             de RapiV Cliente.
           </Text>
@@ -60,7 +79,7 @@ export function LoginScreen({
                 <Text style={loginStyles.modalVersion}>Version {CURRENT_TERMS_VERSION}</Text>
               </View>
               <Pressable
-                accessibilityLabel="Cerrar terminos"
+                accessibilityLabel="Cerrar términos"
                 onPress={() => setAreTermsVisible(false)}
                 style={loginStyles.closeButton}
               >
@@ -85,6 +104,21 @@ export function LoginScreen({
   );
 }
 
+function Benefit({
+  icon,
+  label,
+}: {
+  icon: keyof typeof MaterialIcons.glyphMap;
+  label: string;
+}) {
+  return (
+    <View style={loginStyles.benefitItem}>
+      <MaterialIcons name={icon} size={17} color={colors.primary} />
+      <Text style={loginStyles.benefitText}>{label}</Text>
+    </View>
+  );
+}
+
 const loginStyles = StyleSheet.create({
   container: {
     backgroundColor: colors.background,
@@ -94,6 +128,19 @@ const loginStyles = StyleSheet.create({
   },
   brandBlock: {
     marginBottom: 28
+  },
+  logoMark: {
+    alignItems: "center",
+    borderRadius: 18,
+    height: 76,
+    justifyContent: "center",
+    marginBottom: 18,
+    overflow: "hidden",
+    width: 76
+  },
+  logoImage: {
+    height: "100%",
+    width: "100%"
   },
   brand: {
     color: colors.primary,
@@ -114,6 +161,20 @@ const loginStyles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
     marginTop: 8
+  },
+  benefits: {
+    gap: 10,
+    marginTop: 18
+  },
+  benefitItem: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 9
+  },
+  benefitText: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: "800"
   },
   form: {
     backgroundColor: colors.surface,

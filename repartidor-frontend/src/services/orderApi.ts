@@ -15,6 +15,47 @@ export type DeliveryOffer = {
   order: Order;
 };
 
+export type CourierWalletTransaction = {
+  id: string;
+  courierId: string;
+  type: 'TOP_UP' | 'CASH_ORDER_SETTLEMENT' | 'WITHDRAWAL' | 'ADMIN_ADJUSTMENT';
+  amountCents: number;
+  balanceAfterCents: number;
+  orderGroupId?: string | null;
+  referenceId?: string | null;
+  createdAt: string;
+};
+
+export type CourierWalletSummary = {
+  courierId: string;
+  balanceCents: number;
+  activeCashCommitmentCents: number;
+  availableCents: number;
+  recentTransactions: CourierWalletTransaction[];
+};
+
+export type CourierWalletTopUp = {
+  id: string;
+  amountCents: number;
+  currency: string;
+  status: 'REQUIRES_ACTION' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
+  provider: string;
+  providerPaymentId: string;
+  checkoutUrl?: string;
+  clientSecret?: string;
+  paidAt?: string | null;
+};
+
+export type CourierWalletWithdrawal = {
+  transactionId: string;
+  amountCents: number;
+  currency: string;
+  status: 'SUCCEEDED';
+  provider: string;
+  providerTransferId: string;
+  balanceAfterCents: number;
+};
+
 export async function updateCourierAvailability(
   token: string,
   payload: {
@@ -54,6 +95,50 @@ export async function refreshCourierStripeStatus(token: string): Promise<Courier
   return apiRequest<CourierStripeConnectProfile>('/orders/courier/stripe/refresh-status', {
     method: 'POST',
     token
+  });
+}
+
+export async function fetchCourierWallet(token: string): Promise<CourierWalletSummary> {
+  return apiRequest<CourierWalletSummary>('/payments/courier-wallet', {
+    token
+  });
+}
+
+export async function createCourierWalletTopUp(
+  token: string,
+  amountCents: number
+): Promise<CourierWalletTopUp> {
+  return apiRequest<CourierWalletTopUp>('/payments/courier-wallet/top-ups', {
+    method: 'POST',
+    token,
+    headers: {
+      'Idempotency-Key': `wallet-topup-${Date.now()}-${amountCents}`
+    },
+    body: { amountCents }
+  });
+}
+
+export async function syncCourierWalletTopUp(
+  token: string,
+  topUpId: string
+): Promise<CourierWalletTopUp> {
+  return apiRequest<CourierWalletTopUp>(`/payments/courier-wallet/top-ups/${topUpId}/sync`, {
+    method: 'POST',
+    token
+  });
+}
+
+export async function createCourierWalletWithdrawal(
+  token: string,
+  amountCents: number
+): Promise<CourierWalletWithdrawal> {
+  return apiRequest<CourierWalletWithdrawal>('/payments/courier-wallet/withdrawals', {
+    method: 'POST',
+    token,
+    headers: {
+      'Idempotency-Key': `wallet-withdrawal-${Date.now()}-${amountCents}`
+    },
+    body: { amountCents }
   });
 }
 

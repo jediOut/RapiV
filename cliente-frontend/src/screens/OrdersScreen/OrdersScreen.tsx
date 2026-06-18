@@ -81,7 +81,7 @@ export default function OrdersScreen({ navigation }: Props) {
           actionLabel="Reintentar"
           message={error}
           onAction={() => void loadOrders(true)}
-          title={error.includes('Sin conexion') ? 'Sin conexion' : 'No pudimos cargar tus pedidos'}
+          title={error.includes('Sin conexion') ? 'Sin conexión' : 'No pudimos cargar tus pedidos'}
           type="error"
         />
       ) : (
@@ -116,8 +116,8 @@ export default function OrdersScreen({ navigation }: Props) {
               <StateView
                 message={
                   selectedTab === 'active'
-                    ? 'Cuando tengas un pedido en curso, lo veras aqui con su estado.'
-                    : 'Los pedidos entregados o cancelados apareceran aqui.'
+                    ? 'Cuando tengas un pedido en curso, lo verás aquí con su estado.'
+                    : 'Los pedidos entregados o cancelados aparecerán aquí.'
                 }
                 title={selectedTab === 'active' ? 'No tienes pedidos activos' : 'No hay compras anteriores'}
               />

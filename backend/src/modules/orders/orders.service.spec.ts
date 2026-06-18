@@ -14,7 +14,6 @@ import { Product } from "../products/product.entity";
 import { DeliveryOffer } from "./delivery-offer.entity";
 import { OrderItem } from "./order-item.entity";
 import { Order } from "./order.entity";
-import { CashSettlement } from "../payments/cash-settlement.entity";
 import type { BusinessOrderStatus } from "./order.entity";
 import { OrdersService } from "./orders.service";
 import { User } from "../users/user.entity";
@@ -64,9 +63,19 @@ function createOrder(overrides: Partial<Order> = {}): Order {
   } as Order;
 }
 
+function readyCourierProfile(userId = courierId): CourierProfile {
+  return {
+    userId,
+    availabilityStatus: "AVAILABLE",
+    stripeConnectedAccountId: `acct_${userId}`,
+    stripePayoutsEnabled: true,
+    createdAt: new Date(),
+    updatedAt: new Date()
+  } as CourierProfile;
+}
+
 function createService(options: {
   orders?: Order[];
-  cashSettlements?: CashSettlement[];
   products?: Product[];
   businesses?: Business[];
   offers?: DeliveryOffer[];
@@ -81,7 +90,6 @@ function createService(options: {
   const offers = options.offers ?? [];
   const payments = options.payments ?? [];
   const courierProfiles = options.courierProfiles ?? [];
-  const cashSettlements = options.cashSettlements ?? [];
   const users = options.users ?? [];
   const enqueuedOfferGenerations: string[] = [];
   const enqueuedCourierDeliveryTimeouts: Array<{ orderGroupId: string; delayMs?: number }> = [];
@@ -402,16 +410,6 @@ function createService(options: {
       ) ?? null;
     }
   };
-  const cashSettlementRepository = {
-    async findOne(options: { where: Partial<CashSettlement> }) {
-      return cashSettlements.find((settlement) =>
-        matchesWhere(settlement, options.where)
-      ) ?? null;
-    },
-    async find(options: { where: Partial<CashSettlement> }) {
-      return cashSettlements.filter((settlement) => matchesWhere(settlement, options.where));
-    }
-  };
   const refundCalls: Array<{
     providerPaymentId: string;
     idempotencyKey: string;
@@ -464,6 +462,17 @@ function createService(options: {
       this.courierPayoutOrderGroupIds.push(orderGroupId);
     }
   };
+  const courierWalletService = {
+    async assertCanCoverCashOrders() {
+      return undefined;
+    },
+    async debitCashOrderSettlement() {
+      return null;
+    },
+    cashSettlementRequiredCents() {
+      return 0;
+    }
+  };
 
   const service = new OrdersService(
     orderRepository as never,
@@ -472,14 +481,14 @@ function createService(options: {
     userRepository as never,
     courierProfileRepository as never,
     paymentRepository as never,
-    cashSettlementRepository as never,
     dataSource as never,
     businessesService as never,
     orderProcessingQueue as never,
     notificationsService as never,
     paymentProviderService as never,
     paymentProcessingQueue as never,
-    stripeConnectService as never
+    stripeConnectService as never,
+    courierWalletService as never
   );
 
   return {
@@ -493,6 +502,7 @@ function createService(options: {
     sentNotifications,
     refundCalls,
     queuedCourierPayoutOrderGroupIds: paymentProcessingQueue.courierPayoutOrderGroupIds,
+    courierWalletService,
     stripeAccountCalls,
     getTransactionCount: () => transactionCount
   };
@@ -984,7 +994,10 @@ describe("OrdersService", () => {
       businessId: "business-2",
       status: "CANCELLED"
     });
-    const { service } = createService({ orders: [firstOrder, secondOrder] });
+    const { service } = createService({
+      orders: [firstOrder, secondOrder],
+      courierProfiles: [readyCourierProfile()]
+    });
 
     const orderGroup = await service.findById(orderGroupId);
 
@@ -1008,7 +1021,10 @@ describe("OrdersService", () => {
         } as OrderItem
       ]
     });
-    const { service } = createService({ orders: [firstOrder, secondOrder] });
+    const { service } = createService({
+      orders: [firstOrder, secondOrder],
+      courierProfiles: [readyCourierProfile()]
+    });
 
     const assigned = await service.assignToCourier(courierId, orderGroupId);
 
@@ -1042,12 +1058,7 @@ describe("OrdersService", () => {
       createdAt: new Date(),
       updatedAt: new Date()
     } as DeliveryOffer;
-    const profile = {
-      userId: courierId,
-      availabilityStatus: "AVAILABLE",
-      createdAt: new Date(),
-      updatedAt: new Date()
-    } as CourierProfile;
+    const profile = readyCourierProfile();
     const { service, sentNotifications, enqueuedCourierDeliveryTimeouts } = createService({
       orders: [order],
       offers: [acceptedOffer, competingOffer],
@@ -1124,7 +1135,10 @@ describe("OrdersService", () => {
       businessId: "business-2",
       status: "PREPARING"
     });
-    const { service } = createService({ orders: [readyOrder, preparingOrder] });
+    const { service } = createService({
+      orders: [readyOrder, preparingOrder],
+      courierProfiles: [readyCourierProfile()]
+    });
 
     const assigned = await service.assignToCourier(courierId, orderGroupId);
 
@@ -1190,7 +1204,8 @@ describe("OrdersService", () => {
       status: "READY"
     });
     const { service, enqueuedOfferGenerations } = createService({
-      orders: [firstOrder, secondOrder]
+      orders: [firstOrder, secondOrder],
+      courierProfiles: [readyCourierProfile()]
     });
 
     await service.updateCourierAvailability(courierId, {
@@ -1202,16 +1217,8 @@ describe("OrdersService", () => {
     assert.deepEqual(enqueuedOfferGenerations, [orderGroupId]);
   });
 
-  it("blocks new orders when the courier has an overdue cash settlement", async () => {
-    const settlement = {
-      id: "settlement-1",
-      courierId,
-      settlementDate: "2026-06-05",
-      status: "PENDING",
-      periodEndAt: new Date(Date.now() - 31 * 60_000),
-      netDueToRapivCents: 1250
-    } as CashSettlement;
-    const { service } = createService({ cashSettlements: [settlement] });
+  it("blocks new orders when the courier has not completed Stripe Connect", async () => {
+    const { service } = createService();
 
     await assert.rejects(
       service.updateCourierAvailability(courierId, {
@@ -1223,26 +1230,40 @@ describe("OrdersService", () => {
     );
   });
 
-  it("blocks new orders when a business cash payout is overdue", async () => {
+  it("filters cash offers when the courier wallet cannot cover the order", async () => {
     const order = createOrder({
-      status: "DELIVERED",
-      courierId,
+      status: "READY",
       paymentMethod: "CASH",
-      paymentStatus: "PAID",
-      cashCollectedAt: new Date(Date.now() - 121 * 60_000),
-      businessPayoutCents: 2250,
-      businessCashPayoutStatus: "PENDING"
+      deliveryFeeCents: 3000,
+      courierPayoutCents: 2500
     });
-    const { service } = createService({ orders: [order] });
+    const offer = {
+      id: "offer-1",
+      orderGroupId,
+      courierId,
+      status: "PENDING",
+      score: 9000,
+      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: new Date(),
+      updatedAt: new Date()
+    } as DeliveryOffer;
+    const { service, courierWalletService } = createService({
+      orders: [order],
+      offers: [offer],
+      courierProfiles: [readyCourierProfile()]
+    });
 
-    await assert.rejects(
-      service.updateCourierAvailability(courierId, {
-        status: "AVAILABLE",
-        latitude: 20.0289,
-        longitude: -96.6472
-      }),
-      ConflictException
-    );
+    const originalAssertCanCover = courierWalletService.assertCanCoverCashOrders;
+    courierWalletService.assertCanCoverCashOrders = async () => {
+      throw new ConflictException("Saldo RapiV insuficiente");
+    };
+
+    try {
+      const summaries = await service.findOffersForCourier(courierId);
+      assert.equal(summaries.length, 0);
+    } finally {
+      courierWalletService.assertCanCoverCashOrders = originalAssertCanCover;
+    }
   });
 
   it("lets the business confirm a delivered cash payout", async () => {
@@ -1316,14 +1337,12 @@ describe("OrdersService", () => {
       ],
       courierProfiles: [
         {
-          userId: otherCourierId,
+          ...readyCourierProfile(otherCourierId),
           availabilityStatus: "AVAILABLE",
           preferredLatitude: 20.0289,
           preferredLongitude: -96.6472,
           preferredRadiusKm: 35,
-          maxDeliveryDistanceKm: 35,
-          createdAt: new Date(),
-          updatedAt: new Date()
+          maxDeliveryDistanceKm: 35
         } as CourierProfile
       ]
     });
@@ -1360,14 +1379,12 @@ describe("OrdersService", () => {
       ],
       courierProfiles: [
         {
-          userId: otherCourierId,
+          ...readyCourierProfile(otherCourierId),
           availabilityStatus: "AVAILABLE",
           preferredLatitude: 20.0289,
           preferredLongitude: -96.6472,
           preferredRadiusKm: 35,
-          maxDeliveryDistanceKm: 35,
-          createdAt: new Date(),
-          updatedAt: new Date()
+          maxDeliveryDistanceKm: 35
         } as CourierProfile
       ]
     });

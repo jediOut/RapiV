@@ -202,6 +202,18 @@ function createService(options: {
     }
   };
 
+  const courierWalletTopUpRepository = {
+    async findOne() {
+      return null;
+    },
+    create(value: unknown) {
+      return value;
+    },
+    async save(value: unknown) {
+      return value;
+    }
+  };
+
   const orderRepository = {
     async find() {
       return orders.filter((order) =>
@@ -337,6 +349,21 @@ function createService(options: {
     }
   };
 
+  const courierWalletService = {
+    async getSummary() {
+      return {
+        courierId: "courier-1",
+        balanceCents: 0,
+        activeCashCommitmentCents: 0,
+        availableCents: 0,
+        recentTransactions: []
+      };
+    },
+    async creditTopUp() {
+      return undefined;
+    }
+  };
+
   const processingQueue = {
     async addWebhookEvent(eventId: string) {
       queuedEventIds.push(eventId);
@@ -352,9 +379,11 @@ function createService(options: {
     businessRepository as never,
     courierProfileRepository as never,
     orderRepository as never,
+    courierWalletTopUpRepository as never,
     dataSource as never,
     ordersService as never,
     providerService as never,
+    courierWalletService as never,
     processingQueue as never
   );
 

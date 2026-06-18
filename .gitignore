@@ -1,6 +1,12 @@
 # Environment files
 .env
+.deploy/
 .env.*
+*.jks
+*.keystore
+*.p12
+credentials.json
+google-services.json
 deploy/staging.env
 !.env.example
 !backend/.env.example
@@ -15,6 +21,7 @@ node_modules/
 dist/
 build/
 coverage/
+artifacts/
 *.tsbuildinfo
 
 # Expo / React Native

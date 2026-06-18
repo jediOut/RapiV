@@ -30,6 +30,28 @@ import type { Rating } from '@rapidin/contracts';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'OrderDetail'>;
 const ratingGold = '#F59E0B';
+const orderTimeline = [
+  { key: 'received', label: 'Pedido recibido' },
+  { key: 'preparing', label: 'Preparando' },
+  { key: 'on_the_way', label: 'En camino' },
+  { key: 'delivered', label: 'Entregado' },
+] as const;
+
+function getTimelineIndex(status: Order['status']) {
+  if (status === 'delivered') {
+    return 3;
+  }
+
+  if (status === 'assigned' || status === 'picked_up' || status === 'on_the_way') {
+    return 2;
+  }
+
+  if (status === 'confirmed' || status === 'preparing' || status === 'ready') {
+    return 1;
+  }
+
+  return 0;
+}
 
 export default function OrderDetailScreen({ navigation, route }: Props) {
   const { orderId } = route.params;
@@ -176,7 +198,7 @@ export default function OrderDetailScreen({ navigation, route }: Props) {
             distanceInKm(nextLocation.customer, nextLocation.courier) <= 0.08
           ) {
             hasNotifiedAtDoor.current = true;
-            Alert.alert('Tu pedido esta en la puerta', 'El repartidor ya esta muy cerca de tu ubicacion.');
+            Alert.alert('Tu pedido está en la puerta', 'El repartidor ya está muy cerca de tu ubicación.');
           }
         }
       } catch {
@@ -316,7 +338,7 @@ export default function OrderDetailScreen({ navigation, route }: Props) {
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
-        <Header title="Detalle Pedido" onBackPress={() => navigation.goBack()} />
+        <Header title="Detalle del pedido" onBackPress={() => navigation.goBack()} />
         <StateView title="Cargando pedido" message="Estamos consultando el detalle del pedido." type="loading" />
       </SafeAreaView>
     );
@@ -325,16 +347,16 @@ export default function OrderDetailScreen({ navigation, route }: Props) {
   if (error || !order) {
     return (
       <SafeAreaView style={styles.container}>
-        <Header title="Detalle Pedido" onBackPress={() => navigation.goBack()} />
+        <Header title="Detalle del pedido" onBackPress={() => navigation.goBack()} />
         <StateView
           actionLabel={error?.includes('Sin conexion') ? 'Reintentar' : undefined}
           message={
             error?.includes('Sin conexion')
               ? error
-              : 'El pedido no existe o ya no esta disponible para esta cuenta.'
+              : 'El pedido no existe o ya no está disponible para esta cuenta.'
           }
           onAction={error?.includes('Sin conexion') ? loadOrder : undefined}
-          title={error?.includes('Sin conexion') ? 'Sin conexion' : 'Pedido no encontrado'}
+          title={error?.includes('Sin conexion') ? 'Sin conexión' : 'Pedido no encontrado'}
           type="error"
         />
       </SafeAreaView>
@@ -343,10 +365,10 @@ export default function OrderDetailScreen({ navigation, route }: Props) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <Header title="Detalle Pedido" onBackPress={() => navigation.goBack()} />
+      <Header title="Detalle del pedido" onBackPress={() => navigation.goBack()} />
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Estado del Pedido</Text>
+          <Text style={styles.sectionTitle}>Estado del pedido</Text>
           <View
             style={[
               styles.statusBadge,
@@ -361,14 +383,43 @@ export default function OrderDetailScreen({ navigation, route }: Props) {
             <View style={styles.refundNotice}>
               <Text style={styles.refundNoticeTitle}>Pago reembolsado</Text>
               <Text style={styles.refundNoticeBody}>
-                Este pedido fue cancelado y el reembolso ya fue procesado. El banco puede tardar algunos dias en reflejarlo en tu tarjeta.
+                Este pedido fue cancelado y el reembolso ya fue procesado. El banco puede tardar algunos días en reflejarlo en tu tarjeta.
               </Text>
             </View>
           ) : null}
         </View>
 
+        <View style={styles.nextStepCard}>
+          <Text style={styles.nextStepEyebrow}>Qué sigue</Text>
+          <Text style={styles.nextStepTitle}>
+            {order.status === 'cancelled'
+              ? 'Este pedido fue cancelado'
+              : order.status === 'delivered'
+                ? 'Pedido entregado'
+                : getStatusLabel(order.status)}
+          </Text>
+          <View style={styles.timeline}>
+            {orderTimeline.map((step, index) => {
+              const isDone = order.status === 'delivered' || index <= getTimelineIndex(order.status);
+              const isCurrent = index === getTimelineIndex(order.status) && order.status !== 'delivered';
+
+              return (
+                <View key={step.key} style={styles.timelineItem}>
+                  <View style={[styles.timelineDot, isDone && styles.timelineDotDone, isCurrent && styles.timelineDotCurrent]}>
+                    <Text style={[styles.timelineDotText, isDone && styles.timelineDotTextDone]}>{index + 1}</Text>
+                  </View>
+                  <Text style={[styles.timelineLabel, isDone && styles.timelineLabelDone]}>{step.label}</Text>
+                  {index < orderTimeline.length - 1 ? (
+                    <View style={[styles.timelineLine, isDone && styles.timelineLineDone]} />
+                  ) : null}
+                </View>
+              );
+            })}
+          </View>
+        </View>
+
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Articulos</Text>
+          <Text style={styles.sectionTitle}>Artículos</Text>
           {order.items.map((item, index) => (
             <View key={index} style={styles.itemRow}>
               <View style={styles.itemInfo}>
@@ -442,7 +493,7 @@ export default function OrderDetailScreen({ navigation, route }: Props) {
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>
-            {order.fulfillmentMethod === 'PICKUP' ? 'Forma de entrega' : 'Direccion de entrega'}
+            {order.fulfillmentMethod === 'PICKUP' ? 'Forma de entrega' : 'Dirección de entrega'}
           </Text>
           <Text style={styles.addressText}>
             {order.fulfillmentMethod === 'PICKUP'
@@ -453,7 +504,7 @@ export default function OrderDetailScreen({ navigation, route }: Props) {
 
         {deliveryLocation ? (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Ubicacion de entrega</Text>
+            <Text style={styles.sectionTitle}>Ubicación de entrega</Text>
             <MapView
               initialRegion={VEGA_SERVICE_address}
               maxZoomLevel={VEGA_MAP_LIMITS.maxZoomLevel}
@@ -469,7 +520,7 @@ export default function OrderDetailScreen({ navigation, route }: Props) {
               zoomEnabled={false}
             >
               {deliveryLocation.customer ? (
-                <Marker coordinate={clampToVegaBounds(deliveryLocation.customer)} title="Tu ubicacion" />
+                <Marker coordinate={clampToVegaBounds(deliveryLocation.customer)} title="Tu ubicación" />
               ) : null}
               {deliveryLocation.courier ? (
                 <Marker coordinate={clampToVegaBounds(deliveryLocation.courier)} title="Repartidor" pinColor={colors.primary} />
@@ -527,7 +578,7 @@ function RatingRow({
         <Text style={styles.ratingLabel}>{label}</Text>
         {rating ? (
           <Text style={styles.ratingDone}>
-            {canEdit ? 'Toca una estrella para corregir' : 'Valoracion final'}
+            {canEdit ? 'Toca una estrella para corregir' : 'Valoración final'}
           </Text>
         ) : null}
       </View>

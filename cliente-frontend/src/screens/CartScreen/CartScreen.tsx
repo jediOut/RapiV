@@ -34,7 +34,7 @@ const DELIVERY_FEE_CENTS = 3000;
 const CARD_PAYMENT_MINIMUM_CENTS = 18000;
 
 export default function CartScreen({ navigation }: Props) {
-  const { cart, subtotalCents, clearCart } = useCart();
+  const { cart, subtotalCents, clearCart, removeFromCart, updateQuantity } = useCart();
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [deliveryLocation, setDeliveryLocation] = useState<DeliveryLocation | null>(null);
   const [isLocating, setIsLocating] = useState(false);
@@ -62,7 +62,7 @@ export default function CartScreen({ navigation }: Props) {
     .map((item) => {
       const minimum = item.product.minimumQuantityPerOrder ?? 1;
       return item.quantity < minimum
-        ? `${item.product.name} requiere minimo ${minimum} por pedido.`
+        ? `${item.product.name} requiere mínimo ${minimum} por pedido.`
         : null;
     })
     .filter(Boolean) as string[];
@@ -136,8 +136,8 @@ export default function CartScreen({ navigation }: Props) {
 
       if (permission.status !== 'granted') {
         Alert.alert(
-          'Ubicacion requerida',
-          'Permite acceder a tu ubicacion para enviar el pedido de forma segura.'
+          'Ubicación requerida',
+          'Permite acceder a tu ubicación para enviar el pedido de forma segura.'
         );
         return null;
       }
@@ -159,12 +159,12 @@ export default function CartScreen({ navigation }: Props) {
       setDeliveryLocation(nextLocation);
 
       if (!deliveryAddress.trim()) {
-        setDeliveryAddress(resolvedAddress ?? 'Ubicacion GPS confirmada');
+        setDeliveryAddress(resolvedAddress ?? 'Ubicación GPS confirmada');
       }
 
       return nextLocation;
     } catch {
-      Alert.alert('Error de ubicacion', 'No se pudo obtener la ubicacion del telefono.');
+      Alert.alert('Error de ubicación', 'No se pudo obtener la ubicación del teléfono.');
       return null;
     } finally {
       setIsLocating(false);
@@ -214,10 +214,10 @@ export default function CartScreen({ navigation }: Props) {
         'Pedido creado',
         fulfillmentMethod === 'PICKUP'
           ? paymentMethod === 'CASH'
-            ? 'Tu pedido fue enviado al negocio. Pagaras en efectivo al recogerlo.'
-            : 'Tu pedido fue creado. Puedes pagarlo con tarjeta y recogerlo cuando este listo.'
+            ? 'Tu pedido fue enviado al negocio. Pagarás en efectivo al recogerlo.'
+            : 'Tu pedido fue creado. Puedes pagarlo con tarjeta y recogerlo cuando esté listo.'
           : paymentMethod === 'CASH'
-            ? 'Tu pedido fue enviado al negocio. Pagaras en efectivo al recibirlo.'
+            ? 'Tu pedido fue enviado al negocio. Pagarás en efectivo al recibirlo.'
             : 'Tu pedido fue creado. Puedes pagarlo con tarjeta.'
       );
       navigation.navigate('OrderDetail', { orderId: order.id });
@@ -235,7 +235,7 @@ export default function CartScreen({ navigation }: Props) {
     }
 
     if (cart.length === 0) {
-      Alert.alert('Carrito vacio', 'Agrega productos antes de hacer pedido.');
+      Alert.alert('Carrito vacío', 'Agrega productos antes de hacer pedido.');
       return;
     }
 
@@ -248,12 +248,12 @@ export default function CartScreen({ navigation }: Props) {
     }
 
     if (fulfillmentMethod === 'DELIVERY' && !deliveryAddress.trim()) {
-      Alert.alert('Direccion requerida', 'Confirma una referencia de entrega.');
+      Alert.alert('Dirección requerida', 'Confirma una referencia de entrega.');
       return;
     }
 
     if (minimumIssues.length) {
-      Alert.alert('Pedido minimo', minimumIssues.join('\n'));
+      Alert.alert('Pedido mínimo', minimumIssues.join('\n'));
       return;
     }
 
@@ -277,10 +277,10 @@ export default function CartScreen({ navigation }: Props) {
 
     if (fulfillmentMethod === 'DELIVERY') {
       Alert.alert(
-        'Confirmar direccion',
+        'Confirmar dirección',
         `Enviar este pedido a:\n\n${deliveryAddress.trim()}`,
         [
-          { text: 'Cambiar direccion', style: 'cancel' },
+          { text: 'Cambiar dirección', style: 'cancel' },
           {
             text: 'Confirmar',
             onPress: () => {
@@ -297,7 +297,7 @@ export default function CartScreen({ navigation }: Props) {
 
   const renderEmptyCart = () => (
     <View style={styles.emptyContainer}>
-      <Text style={styles.emptyText}>Tu carrito esta vacio</Text>
+      <Text style={styles.emptyText}>Tu carrito está vacío</Text>
       <PrimaryButton
         label="Ir a comprar"
         onPress={() => navigation.navigate('Home')}
@@ -312,160 +312,198 @@ export default function CartScreen({ navigation }: Props) {
       {cart.length === 0 ? (
         renderEmptyCart()
       ) : (
-        <View style={styles.content}>
-          <FlatList
-            data={cart}
-            keyExtractor={(item) => item.product.id}
-            renderItem={({ item }) => (
-              <View style={styles.cartItem}>
-                <View style={styles.itemInfo}>
-                  <Text style={styles.itemName}>{item.product.name}</Text>
-                  <Text style={styles.itemQuantity}>Cantidad: {item.quantity}</Text>
-                  <Text style={styles.itemQuantity}>
-                    ${(item.product.priceCents * item.quantity / 100).toFixed(2)}
-                  </Text>
-                </View>
-              </View>
-            )}
-          />
-
-          <Text style={styles.inputLabel}>Forma de entrega</Text>
-          <View style={styles.paymentMethodRow}>
-            <Pressable
-              onPress={() => setFulfillmentMethod('DELIVERY')}
-              style={[
-                styles.paymentMethodOption,
-                fulfillmentMethod === 'DELIVERY' && styles.paymentMethodOptionActive,
-              ]}
-            >
-              <Text style={[styles.paymentMethodText, fulfillmentMethod === 'DELIVERY' && styles.paymentMethodTextActive]}>
-                Envio
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={() => setFulfillmentMethod('PICKUP')}
-              style={[
-                styles.paymentMethodOption,
-                fulfillmentMethod === 'PICKUP' && styles.paymentMethodOptionActive,
-              ]}
-            >
-              <Text style={[styles.paymentMethodText, fulfillmentMethod === 'PICKUP' && styles.paymentMethodTextActive]}>
-                Recoger
-              </Text>
-            </Pressable>
-          </View>
-
-          {fulfillmentMethod === 'DELIVERY' ? (
-            <>
-              <Text style={styles.inputLabel}>Direccion de entrega</Text>
-              <TextInput
-                value={deliveryAddress}
-                onChangeText={setDeliveryAddress}
-                placeholder="Referencia de entrega"
-                placeholderTextColor={colors.textSecondary}
-                style={styles.input}
-              />
-              <PrimaryButton
-                disabled={isLocating || isProcessing}
-                label={isLocating ? 'Obteniendo ubicacion...' : 'Usar ubicacion GPS segura'}
-                onPress={requestDeliveryLocation}
-                variant="secondary"
-              />
-              {deliveryLocation ? (
-                <Text style={styles.locationText}>
-                  Ubicacion lista: {deliveryAddress.trim() || 'Direccion confirmada'}
+        <FlatList
+          contentContainerStyle={styles.scrollContent}
+          data={cart}
+          keyExtractor={(item) => item.product.id}
+          keyboardShouldPersistTaps="handled"
+          style={styles.list}
+          renderItem={({ item }) => (
+            <View style={styles.cartItem}>
+              <View style={styles.itemInfo}>
+                <Text style={styles.itemName}>{item.product.name}</Text>
+                <Text style={styles.itemQuantity}>
+                  ${(item.product.priceCents * item.quantity / 100).toFixed(2)}
                 </Text>
+              </View>
+              <View style={styles.itemControls}>
+                <View style={styles.quantityControls}>
+                  <Pressable
+                    onPress={() => updateQuantity(item.product.id, Math.max(1, item.quantity - 1))}
+                    style={styles.quantityButton}
+                  >
+                    <Text style={styles.quantityButtonText}>-</Text>
+                  </Pressable>
+                  <Text style={styles.quantityText}>{item.quantity}</Text>
+                  <Pressable
+                    onPress={() => updateQuantity(item.product.id, item.quantity + 1)}
+                    style={styles.quantityButton}
+                  >
+                    <Text style={styles.quantityButtonText}>+</Text>
+                  </Pressable>
+                </View>
+                <Pressable
+                  onPress={() => removeFromCart(item.product.id)}
+                  style={styles.removeButton}
+                >
+                  <Text style={styles.removeButtonText}>Eliminar</Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
+          ListFooterComponent={
+            <View style={styles.checkoutContent}>
+              <Text style={styles.inputLabel}>Forma de entrega</Text>
+              <View style={styles.paymentMethodRow}>
+                <Pressable
+                  onPress={() => setFulfillmentMethod('DELIVERY')}
+                  style={[
+                    styles.paymentMethodOption,
+                    fulfillmentMethod === 'DELIVERY' && styles.paymentMethodOptionActive,
+                  ]}
+                >
+                  <Text style={[styles.paymentMethodText, fulfillmentMethod === 'DELIVERY' && styles.paymentMethodTextActive]}>
+                    Envío
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setFulfillmentMethod('PICKUP')}
+                  style={[
+                    styles.paymentMethodOption,
+                    fulfillmentMethod === 'PICKUP' && styles.paymentMethodOptionActive,
+                  ]}
+                >
+                  <Text style={[styles.paymentMethodText, fulfillmentMethod === 'PICKUP' && styles.paymentMethodTextActive]}>
+                    Recoger
+                  </Text>
+                </Pressable>
+              </View>
+
+              {fulfillmentMethod === 'DELIVERY' ? (
+                <>
+                  <Text style={styles.inputLabel}>Dirección de entrega</Text>
+                  <TextInput
+                    value={deliveryAddress}
+                    onChangeText={setDeliveryAddress}
+                    placeholder="Referencia de entrega"
+                    placeholderTextColor={colors.textSecondary}
+                    style={styles.input}
+                  />
+                  <PrimaryButton
+                    disabled={isLocating || isProcessing}
+                    label={isLocating ? 'Obteniendo ubicación...' : 'Usar ubicación GPS segura'}
+                    onPress={requestDeliveryLocation}
+                    variant="secondary"
+                  />
+                  {deliveryLocation ? (
+                    <Text style={styles.locationText}>
+                      Ubicación lista: {deliveryAddress.trim() || 'Dirección confirmada'}
+                    </Text>
+                  ) : (
+                    <Text style={styles.locationHint}>
+                      Tu ubicación se usa para esta entrega y solo la verá el repartidor asignado.
+                    </Text>
+                  )}
+                </>
               ) : (
                 <Text style={styles.locationHint}>
-                  Tu ubicacion se usa para esta entrega y solo la vera el repartidor asignado.
+                  Te avisaremos cuando el negocio marque tu pedido como listo para recoger.
                 </Text>
               )}
-            </>
-          ) : (
-            <Text style={styles.locationHint}>
-              Te avisaremos cuando el negocio marque tu pedido como listo para recoger.
-            </Text>
-          )}
 
-          <View style={styles.summary}>
-            <View style={styles.summaryHeader}>
-              <Text style={styles.summaryTitle}>Resumen de pago</Text>
-              <Text style={styles.summarySubtitle}>{cart.length} producto{cart.length === 1 ? '' : 's'}</Text>
-            </View>
-            <View style={styles.breakdownBox}>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Subtotal de productos</Text>
-                <Text style={styles.summaryValue}>${subtotal.toFixed(2)}</Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>
-                  {fulfillmentMethod === 'DELIVERY' ? 'Envio' : 'Recoger en negocio'}
-                </Text>
-                <Text style={styles.summaryValue}>${deliveryFee.toFixed(2)}</Text>
-              </View>
-              <View style={styles.summaryDivider} />
-              <View style={styles.totalRow}>
-                <View style={styles.totalTextBlock}>
-                  <Text style={styles.totalLabel}>Total a pagar</Text>
-                  <Text style={styles.totalHint}>
-                    {paymentMethod === 'CASH'
-                      ? fulfillmentMethod === 'PICKUP'
-                        ? 'Se cobra al recoger el pedido'
-                        : 'Se cobra al recibir el pedido'
-                      : 'Se paga con Stripe al confirmar'}
-                  </Text>
+              <View style={styles.summary}>
+                <View style={styles.summaryHeader}>
+                  <Text style={styles.summaryTitle}>Resumen de pago</Text>
+                  <Text style={styles.summarySubtitle}>{cart.length} producto{cart.length === 1 ? '' : 's'}</Text>
                 </View>
-                <Text style={styles.totalValue}>${total.toFixed(2)}</Text>
+                <View style={styles.breakdownBox}>
+                  <View style={styles.summaryRow}>
+                    <Text style={styles.summaryLabel}>Subtotal de productos</Text>
+                    <Text style={styles.summaryValue}>${subtotal.toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.summaryRow}>
+                    <Text style={styles.summaryLabel}>
+                      {fulfillmentMethod === 'DELIVERY' ? 'Envío' : 'Recoger en negocio'}
+                    </Text>
+                    <Text style={styles.summaryValue}>${deliveryFee.toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.summaryDivider} />
+                  <View style={styles.totalRow}>
+                    <View style={styles.totalTextBlock}>
+                      <Text style={styles.totalLabel}>Total a pagar</Text>
+                      <Text style={styles.totalHint}>
+                        {paymentMethod === 'CASH'
+                          ? fulfillmentMethod === 'PICKUP'
+                            ? 'Se cobra al recoger el pedido'
+                            : 'Se cobra al recibir el pedido'
+                          : 'Se paga con Stripe al confirmar'}
+                      </Text>
+                    </View>
+                    <Text style={styles.totalValue}>${total.toFixed(2)}</Text>
+                  </View>
+                </View>
+
+                <Text style={styles.inputLabel}>Forma de pago</Text>
+                <View style={styles.paymentMethodRow}>
+                  <Pressable
+                    disabled={!cardAvailable}
+                    onPress={() => setPaymentMethod('CARD')}
+                    style={[
+                      styles.paymentMethodOption,
+                      paymentMethod === 'CARD' && styles.paymentMethodOptionActive,
+                      !cardAvailable && styles.paymentMethodOptionDisabled,
+                    ]}
+                  >
+                    <Text style={[styles.paymentMethodText, paymentMethod === 'CARD' && styles.paymentMethodTextActive]}>
+                      Tarjeta
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    disabled={!acceptsCash}
+                    onPress={() => setPaymentMethod('CASH')}
+                    style={[
+                      styles.paymentMethodOption,
+                      paymentMethod === 'CASH' && styles.paymentMethodOptionActive,
+                      !acceptsCash && styles.paymentMethodOptionDisabled,
+                    ]}
+                  >
+                    <Text style={[styles.paymentMethodText, paymentMethod === 'CASH' && styles.paymentMethodTextActive]}>
+                      Efectivo
+                    </Text>
+                  </Pressable>
+                </View>
+                {paymentMethod === 'CASH' ? (
+                  <Text style={styles.locationHint}>
+                    {fulfillmentMethod === 'PICKUP'
+                      ? 'Pagarás en efectivo directamente al negocio cuando recojas tu pedido.'
+                      : 'El repartidor cobrará el total al entregar y registrará el cambio entregado.'}
+                  </Text>
+                ) : null}
+                {!meetsCardMinimum ? (
+                  <Text style={styles.locationHint}>
+                    Tarjeta disponible desde ${cardMinimum.toFixed(2)} en productos. Pedidos menores se pagan en efectivo.
+                  </Text>
+                ) : null}
+                {minimumIssues.map((issue) => (
+                  <Text key={issue} style={styles.minimumIssue}>
+                    {issue}
+                  </Text>
+                ))}
               </View>
             </View>
-
-            <Text style={styles.inputLabel}>Forma de pago</Text>
-            <View style={styles.paymentMethodRow}>
-              <Pressable
-                disabled={!cardAvailable}
-                onPress={() => setPaymentMethod('CARD')}
-                style={[
-                  styles.paymentMethodOption,
-                  paymentMethod === 'CARD' && styles.paymentMethodOptionActive,
-                  !cardAvailable && styles.paymentMethodOptionDisabled,
-                ]}
-              >
-                <Text style={[styles.paymentMethodText, paymentMethod === 'CARD' && styles.paymentMethodTextActive]}>
-                  Tarjeta
-                </Text>
-              </Pressable>
-              <Pressable
-                disabled={!acceptsCash}
-                onPress={() => setPaymentMethod('CASH')}
-                style={[
-                  styles.paymentMethodOption,
-                  paymentMethod === 'CASH' && styles.paymentMethodOptionActive,
-                  !acceptsCash && styles.paymentMethodOptionDisabled,
-                ]}
-              >
-                <Text style={[styles.paymentMethodText, paymentMethod === 'CASH' && styles.paymentMethodTextActive]}>
-                  Efectivo
-                </Text>
-              </Pressable>
-            </View>
-            {paymentMethod === 'CASH' ? (
-              <Text style={styles.locationHint}>
-                {fulfillmentMethod === 'PICKUP'
-                  ? 'Pagaras en efectivo directamente al negocio cuando recojas tu pedido.'
-                  : 'El repartidor cobrara el total al entregar y registrara el cambio entregado.'}
-              </Text>
-            ) : null}
-            {!meetsCardMinimum ? (
-              <Text style={styles.locationHint}>
-                Tarjeta disponible desde ${cardMinimum.toFixed(2)} en productos. Pedidos menores se pagan en efectivo.
-              </Text>
-            ) : null}
-            {minimumIssues.map((issue) => (
-              <Text key={issue} style={styles.minimumIssue}>
-                {issue}
-              </Text>
-            ))}
-
+          }
+        />
+      )}
+      {cart.length > 0 ? (
+        <View style={styles.checkoutBar}>
+          <View>
+            <Text style={styles.checkoutBarLabel}>Total a pagar</Text>
+            <Text style={styles.checkoutBarHint}>
+              {fulfillmentMethod === 'DELIVERY' ? 'Con envío incluido' : 'Recoger en negocio'}
+            </Text>
+          </View>
+          <View style={styles.checkoutBarAction}>
+            <Text style={styles.checkoutBarTotal}>${total.toFixed(2)}</Text>
             <PrimaryButton
               disabled={
                 isProcessing ||
@@ -473,12 +511,12 @@ export default function CartScreen({ navigation }: Props) {
                 (paymentMethod === 'CASH' && !acceptsCash) ||
                 (paymentMethod === 'CARD' && !cardAvailable)
               }
-              label={isProcessing ? 'Enviando pedido...' : 'Hacer Pedido'}
+              label={isProcessing ? 'Enviando...' : 'Hacer pedido'}
               onPress={handleCheckout}
             />
           </View>
         </View>
-      )}
+      ) : null}
       <CustomerTabBar active="cart" navigation={navigation} />
     </SafeAreaView>
   );
@@ -489,9 +527,15 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  content: {
+  list: {
     flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: 18,
     paddingHorizontal: 16,
+  },
+  checkoutContent: {
+    paddingTop: 4,
   },
   emptyContainer: {
     flex: 1,
@@ -514,6 +558,10 @@ const styles = StyleSheet.create({
   itemInfo: {
     flex: 1,
   },
+  itemControls: {
+    alignItems: 'flex-end',
+    gap: 8,
+  },
   itemName: {
     fontSize: 14,
     fontWeight: '600',
@@ -523,6 +571,42 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textSecondary,
     marginTop: 4,
+  },
+  quantityControls: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  quantityButton: {
+    alignItems: 'center',
+    backgroundColor: colors.primaryLight,
+    borderColor: colors.primaryBorder,
+    borderRadius: 999,
+    borderWidth: 1,
+    height: 30,
+    justifyContent: 'center',
+    width: 30,
+  },
+  quantityButtonText: {
+    color: colors.primary,
+    fontSize: 18,
+    fontWeight: '900',
+    lineHeight: 20,
+  },
+  quantityText: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '800',
+    minWidth: 22,
+    textAlign: 'center',
+  },
+  removeButton: {
+    paddingVertical: 4,
+  },
+  removeButtonText: {
+    color: colors.dangerText,
+    fontSize: 12,
+    fontWeight: '800',
   },
   summary: {
     borderTopWidth: 2,
@@ -661,6 +745,39 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
     marginBottom: 6,
+  },
+  checkoutBar: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderTopColor: colors.border,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  checkoutBarLabel: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  checkoutBarHint: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  checkoutBarAction: {
+    alignItems: 'flex-end',
+    flex: 1,
+    gap: 8,
+    maxWidth: 190,
+  },
+  checkoutBarTotal: {
+    color: colors.primary,
+    fontSize: 22,
+    fontWeight: '900',
   },
 });
 

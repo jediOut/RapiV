@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { colors } from "../theme/colors";
 
@@ -10,11 +11,16 @@ type HeaderProps = {
 };
 
 export function Header({ businessName, isOpen, onLogout }: HeaderProps) {
+  const insets = useSafeAreaInsets();
+
   return (
-    <View style={styles.header}>
-      <View>
-        <Text style={styles.brand}>RapiV</Text>
-        <Text style={styles.businessName}>{businessName}</Text>
+    <View style={[styles.header, { paddingTop: insets.top + 14 }]}>
+      <View style={styles.titleBlock}>
+        <View style={styles.brandRow}>
+          <Image source={require("../../assets/icon.png")} style={styles.headerLogo} />
+          <Text style={styles.brand}>RapiV Negocios</Text>
+        </View>
+        <Text numberOfLines={2} ellipsizeMode="tail" style={styles.businessName}>{businessName}</Text>
       </View>
       <View style={styles.actions}>
         <View style={[styles.statusPill, isOpen ? styles.openPill : styles.closedPill]}>
@@ -31,14 +37,29 @@ export function Header({ businessName, isOpen, onLogout }: HeaderProps) {
 
 const styles = StyleSheet.create({
   header: {
-    alignItems: "center",
+    alignItems: "flex-start",
     backgroundColor: colors.surface,
     borderBottomColor: colors.border,
     borderBottomWidth: 1,
     flexDirection: "row",
     justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingVertical: 16
+    gap: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 14
+  },
+  titleBlock: {
+    flex: 1,
+    minWidth: 0
+  },
+  brandRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 8
+  },
+  headerLogo: {
+    borderRadius: 8,
+    height: 32,
+    width: 32
   },
   brand: {
     color: colors.primary,
@@ -49,14 +70,16 @@ const styles = StyleSheet.create({
   },
   businessName: {
     color: colors.text,
-    fontSize: 22,
+    fontSize: 21,
     fontWeight: "800",
     letterSpacing: 0,
+    lineHeight: 26,
     marginTop: 2
   },
   actions: {
     alignItems: "center",
     flexDirection: "row",
+    flexShrink: 0,
     gap: 8
   },
   statusPill: {

@@ -9,20 +9,35 @@ export const ACTIVE_PARTIAL_DELIVERY_STATUSES = [
   'ON_THE_WAY',
 ] as const;
 
+export const TERMINAL_DELIVERY_STATUSES = [
+  'DELIVERED',
+  'REJECTED',
+  'CANCELLED',
+  'FAILED',
+] as const;
+
 export const STATUS_LABELS: Record<string, string> = {
   ASSIGNED: 'Asignado',
   PICKED_UP: 'Recogido',
   PARTIALLY_PICKED_UP: 'Recogida parcial',
   ON_THE_WAY: 'En camino',
   DELIVERED: 'Entregado',
+  REJECTED: 'Rechazado',
+  CANCELLED: 'Cancelado',
+  PENDING: 'Pendiente',
+  FAILED: 'Fallido',
   READY_FOR_PICKUP: 'Listo para recoger',
   PARTIALLY_READY: 'Parcialmente listo',
-  PREPARING: 'En preparacion',
+  PREPARING: 'En preparación',
   READY: 'Listo',
 };
 
 export function formatStatus(status: string) {
   return STATUS_LABELS[status] ?? status;
+}
+
+export function isTerminalDeliveryStatus(status: string) {
+  return TERMINAL_DELIVERY_STATUSES.includes(status as typeof TERMINAL_DELIVERY_STATUSES[number]);
 }
 
 export function getNextDeliveryStatus(order: Order): 'PICKED_UP' | 'ON_THE_WAY' | 'DELIVERED' {
@@ -73,7 +88,7 @@ export function getPickupAddress(order: Order) {
   return (
     order.businessOrders?.find((current) => ['ASSIGNED', 'READY'].includes(current.status) && current.businessAddress)?.businessAddress
     ?? order.businessOrders?.find((current) => current.businessAddress)?.businessAddress
-    ?? 'Direccion del negocio no disponible'
+    ?? 'Dirección del negocio no disponible'
   );
 }
 
@@ -99,15 +114,15 @@ export function getRouteButtonLabel(order: Order) {
     order.businessOrders.length > 1 &&
     (order.status === 'ASSIGNED' || order.status === 'PARTIALLY_PICKED_UP')
   ) {
-    return 'Ruta sugerida al siguiente comercio';
+    return 'Abrir ruta al siguiente comercio';
   }
 
   if (order.status === 'ASSIGNED') {
-    return 'Ruta al comercio';
+    return 'Abrir ruta al comercio';
   }
 
   if (order.status === 'PICKED_UP' || order.status === 'ON_THE_WAY') {
-    return 'Ruta al cliente';
+    return 'Abrir ruta al cliente';
   }
 
   return 'Abrir ruta sugerida';
@@ -119,7 +134,7 @@ export function getOrderFlowCopy(order: Order) {
   if (businessOrders.length <= 1) {
     return {
       title: 'Pedido de un comercio',
-      body: 'Flujo normal: recoge en el comercio indicado y despues avanza a la entrega.',
+      body: 'Flujo normal: recoge en el comercio indicado y después avanza a la entrega.',
     };
   }
 
