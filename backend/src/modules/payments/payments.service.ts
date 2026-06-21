@@ -674,8 +674,27 @@ export class PaymentsService {
     });
 
     if (paidOrderGroupId) {
-      await this.ordersService.scheduleBusinessAcceptanceTimeouts(paidOrderGroupId);
-      await this.processingQueue.addCourierPayout(paidOrderGroupId);
+      await this.runPostPaymentSideEffects(paidOrderGroupId);
+    }
+  }
+
+  private async runPostPaymentSideEffects(orderGroupId: string): Promise<void> {
+    try {
+      await this.ordersService.scheduleBusinessAcceptanceTimeouts(orderGroupId);
+    } catch (error) {
+      this.monitoring?.recordPaymentEvent("business_acceptance_schedule_failed", {
+        orderGroupId,
+        error: error instanceof Error ? error.message : "Unknown business acceptance scheduling error"
+      });
+    }
+
+    try {
+      await this.processingQueue.addCourierPayout(orderGroupId);
+    } catch (error) {
+      this.monitoring?.recordPaymentEvent("courier_payout_schedule_failed", {
+        orderGroupId,
+        error: error instanceof Error ? error.message : "Unknown courier payout scheduling error"
+      });
     }
   }
 

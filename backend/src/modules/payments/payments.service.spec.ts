@@ -83,6 +83,8 @@ function createService(options: {
       subtotalCents: number;
     }>;
   };
+  scheduleBusinessAcceptanceTimeoutsError?: Error;
+  courierPayoutError?: Error;
 } = {}) {
   const payments = options.payments ?? [];
   const events = options.events ?? [];
@@ -297,6 +299,10 @@ function createService(options: {
       };
     },
     async scheduleBusinessAcceptanceTimeouts() {
+      if (options.scheduleBusinessAcceptanceTimeoutsError) {
+        throw options.scheduleBusinessAcceptanceTimeoutsError;
+      }
+
       return undefined;
     }
   };
@@ -369,6 +375,10 @@ function createService(options: {
       queuedEventIds.push(eventId);
     },
     async addCourierPayout(nextOrderGroupId: string) {
+      if (options.courierPayoutError) {
+        throw options.courierPayoutError;
+      }
+
       queuedCourierPayoutOrderGroupIds.push(nextOrderGroupId);
     }
   };
@@ -605,6 +615,22 @@ describe("PaymentsService", () => {
     assert.equal(orders[0].paymentStatus, "PAID");
     assert.equal(orders[0].paidAt, payment.paidAt);
     assert.equal(events[0].status, "PROCESSED");
+    assert.deepEqual(queuedCourierPayoutOrderGroupIds, [orderGroupId]);
+  });
+
+  it("keeps checkout return successful when post-payment scheduling fails", async () => {
+    const payment = createPayment();
+    const { service, orders, queuedCourierPayoutOrderGroupIds } = createService({
+      payments: [payment],
+      scheduleBusinessAcceptanceTimeoutsError: new Error("queue unavailable")
+    });
+
+    const response = await service.syncPaymentByCheckoutSession(payment.providerPaymentId);
+
+    assert.equal(response.status, "SUCCEEDED");
+    assert.equal(payment.status, "SUCCEEDED");
+    assert.equal(orders[0].paymentStatus, "PAID");
+    assert.equal(orders[0].paidAt, payment.paidAt);
     assert.deepEqual(queuedCourierPayoutOrderGroupIds, [orderGroupId]);
   });
 
