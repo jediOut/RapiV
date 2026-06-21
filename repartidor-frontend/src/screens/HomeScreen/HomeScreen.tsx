@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   FlatList,
   Image,
   Linking,
@@ -71,12 +72,26 @@ function formatMoney(cents?: number | null) {
   return `$${((cents ?? 0) / 100).toFixed(2)}`;
 }
 
+function isCashPayoutCollected(order: Order) {
+  return order.paymentMethod === 'CASH' && order.paymentStatus === 'PAID' && Boolean(order.cashCollectedAt);
+}
+
 function payoutStatusCopy(order: Order) {
   if (!order.courierPayoutCents) {
     return {
       label: 'Sin pago de reparto',
       detail: 'Esta orden no tiene pago de entrega registrado.',
       tone: 'neutral' as const,
+    };
+  }
+
+  if (isCashPayoutCollected(order)) {
+    return {
+      label: 'Pagado',
+      detail: order.cashCollectedAt
+        ? `Ganancia retenida del efectivo cobrado ${new Date(order.cashCollectedAt).toLocaleDateString('es-MX')}.`
+        : 'Ganancia retenida del efectivo cobrado al cliente.',
+      tone: 'paid' as const,
     };
   }
 
@@ -150,8 +165,10 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
     return session?.accessToken;
   }
 
-  async function loadOrders() {
-    setLoading(true);
+  async function loadOrders(options: { preserveCurrentOrders?: boolean } = {}) {
+    if (!options.preserveCurrentOrders) {
+      setLoading(true);
+    }
     setError(null);
 
     try {
@@ -237,7 +254,17 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
           .map((result) => result.value)
       ));
     } catch (fetchError) {
-      setError(fetchError instanceof Error ? fetchError.message : 'No se pudo cargar los pedidos');
+      const message = fetchError instanceof Error ? fetchError.message : 'No se pudo cargar los pedidos';
+
+      if (options.preserveCurrentOrders) {
+        Alert.alert(
+          'Pedido actualizado',
+          `El pedido se actualizo, pero no pudimos refrescar la lista: ${message}`
+        );
+        return;
+      }
+
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -314,7 +341,31 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
     };
   }, [assignedOrders]);
 
-  async function mutateOrder(orderId: string, mutation: (token: string) => Promise<void>) {
+  function applyUpdatedOrder(updatedOrder: Order) {
+    setAssignedOrders((current) => {
+      const existingIndex = current.findIndex((order) => order.id === updatedOrder.id);
+
+      if (existingIndex < 0) {
+        return [updatedOrder, ...current];
+      }
+
+      return current.map((order) => (order.id === updatedOrder.id ? updatedOrder : order));
+    });
+
+    if (isTerminalDeliveryStatus(updatedOrder.status)) {
+      setDeliveryLocations((current) => {
+        const next = { ...current };
+        delete next[updatedOrder.id];
+        return next;
+      });
+    }
+  }
+
+  async function mutateOrder<T>(
+    orderId: string,
+    mutation: (token: string) => Promise<T>,
+    onSuccess?: (result: T) => void
+  ) {
     setMutatingOrderId(orderId);
     setError(null);
 
@@ -326,8 +377,9 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
         return;
       }
 
-      await mutation(token);
-      await loadOrders();
+      const result = await mutation(token);
+      onSuccess?.(result);
+      await loadOrders({ preserveCurrentOrders: true });
     } catch (mutationError) {
       setError(mutationError instanceof Error ? mutationError.message : 'No se pudo actualizar el pedido');
     } finally {
@@ -337,8 +389,8 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
 
   async function handleAcceptOffer(orderId: string, offerId: string) {
     await mutateOrder(orderId, async (token) => {
-      await acceptDeliveryOffer(token, offerId);
-    });
+      return acceptDeliveryOffer(token, offerId);
+    }, applyUpdatedOrder);
   }
 
   async function handleAdvance(order: Order) {
@@ -356,19 +408,32 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
         }
       }
 
-      await updateDeliveryStatus(token, order.id, nextStatus, cashReceivedCents);
+      return updateDeliveryStatus(token, order.id, nextStatus, cashReceivedCents);
+    }, (updatedOrder) => {
+      applyUpdatedOrder(updatedOrder);
+
+      if (updatedOrder.status === 'DELIVERED') {
+        Alert.alert('Pedido entregado', 'El pedido quedo marcado como entregado.');
+      }
     });
   }
 
   async function handlePickupBusinessOrder(order: Order, businessOrderId: string) {
     await mutateOrder(order.id, async (token) => {
-      await markBusinessOrderPickedUp(token, order.id, businessOrderId);
-    });
+      return markBusinessOrderPickedUp(token, order.id, businessOrderId);
+    }, applyUpdatedOrder);
   }
 
   async function handleNotifyArrival(order: Order) {
     await mutateOrder(order.id, async (token) => {
-      await notifyCustomerArrival(token, order.id);
+      return notifyCustomerArrival(token, order.id);
+    }, (result) => {
+      Alert.alert(
+        result.alreadyNotified ? 'Aviso ya enviado' : 'Aviso enviado',
+        result.alreadyNotified
+          ? 'El cliente ya tenia registrado este aviso.'
+          : 'Se registro el aviso para el cliente.'
+      );
     });
   }
 
@@ -602,6 +667,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
     const payoutCopy = payoutStatusCopy(item);
     const cashSettlementRequiredCents =
       item.cashSettlementRequiredCents ?? Math.max(0, item.totalCents - (item.courierPayoutCents ?? 0));
+    const isCashOrderSettled = item.paymentMethod === 'CASH' && item.paymentStatus === 'PAID';
     const nextLabel = hasCollectableBusinessOrder
       ? isMultiBusinessOrder
         ? ''
@@ -614,7 +680,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
     return (
       <View style={styles.card}>
         <View style={styles.cardHeader}>
-          <View>
+          <View style={styles.cardHeaderText}>
             <Text style={styles.orderId}>Número de pedido RAP-{item.id.slice(0, 8).toUpperCase()}</Text>
             <Text style={styles.orderStatus}>
               {item.listMode === 'offer'
@@ -697,7 +763,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
                 : ''}
             </Text>
             <Text style={styles.cashText}>
-              Se descontará de tu depósito RapiV: {formatMoney(cashSettlementRequiredCents)}. Tu ganancia queda como {formatMoney(item.courierPayoutCents ?? 0)}.
+              {isCashOrderSettled ? 'Ya se descontó' : 'Se reservará'} de tu depósito RapiV: {formatMoney(cashSettlementRequiredCents)}. Tu ganancia queda como {formatMoney(item.courierPayoutCents ?? 0)}.
             </Text>
             {item.status === 'ON_THE_WAY' && item.paymentStatus !== 'PAID' ? (
               <>
@@ -857,13 +923,16 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
   );
   const paidPayoutCents = useMemo(
     () => deliveredOrders
-      .filter((order) => order.courierPayoutStatus === 'PAID')
+      .filter((order) => order.courierPayoutStatus === 'PAID' || isCashPayoutCollected(order))
       .reduce((sum, order) => sum + (order.courierPayoutCents ?? 0), 0),
     [deliveredOrders]
   );
   const pendingPayoutCents = useMemo(
     () => assignedOrders
-      .filter((order) => order.courierPayoutStatus === 'PENDING' || order.courierPayoutStatus === 'FAILED')
+      .filter((order) =>
+        !isCashPayoutCollected(order) &&
+        (order.courierPayoutStatus === 'PENDING' || order.courierPayoutStatus === 'FAILED')
+      )
       .reduce((sum, order) => sum + (order.courierPayoutCents ?? 0), 0),
     [assignedOrders]
   );
@@ -977,6 +1046,9 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
 
   function renderWalletTab() {
     const recentTransactions = wallet?.recentTransactions ?? [];
+    const walletBalanceCents = wallet?.balanceCents ?? 0;
+    const walletAvailableCents = wallet?.availableCents ?? 0;
+    const walletCommittedCents = wallet?.activeCashCommitmentCents ?? 0;
 
     return (
       <ScrollView
@@ -984,14 +1056,14 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refreshOrders} />}
       >
         <View style={styles.walletBalanceCard}>
-          <Text style={styles.walletLabel}>Depósito RapiV</Text>
-          <Text style={styles.walletBalance}>{formatMoney(wallet?.balanceCents ?? 0)}</Text>
+          <Text style={styles.walletLabel}>Depósito disponible para efectivo</Text>
+          <Text style={styles.walletBalance}>{formatMoney(walletAvailableCents)}</Text>
           <Text style={styles.walletDetail}>
-            Disponible para pedidos en efectivo: {formatMoney(wallet?.availableCents ?? 0)}
+            Saldo total depositado: {formatMoney(walletBalanceCents)}
           </Text>
-          {wallet?.activeCashCommitmentCents ? (
+          {walletCommittedCents ? (
             <Text style={styles.walletDetail}>
-              Comprometido en entregas activas: {formatMoney(wallet.activeCashCommitmentCents)}
+              Comprometido en entregas activas: {formatMoney(walletCommittedCents)}
             </Text>
           ) : null}
         </View>
@@ -1043,11 +1115,11 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
             value={withdrawAmount}
           />
           <TouchableOpacity
-            disabled={isWithdrawing || !stripeReady || (wallet?.availableCents ?? 0) <= 0}
+            disabled={isWithdrawing || !stripeReady || walletAvailableCents <= 0}
             onPress={handleWithdrawWallet}
             style={[
               styles.withdrawButton,
-              (isWithdrawing || !stripeReady || (wallet?.availableCents ?? 0) <= 0) && styles.disabledButton
+              (isWithdrawing || !stripeReady || walletAvailableCents <= 0) && styles.disabledButton
             ]}
           >
             <Text style={styles.withdrawButtonText}>

@@ -162,6 +162,10 @@ export const styles = StyleSheet.create({
     gap: 12,
     justifyContent: 'space-between',
   },
+  cardHeaderText: {
+    flex: 1,
+    minWidth: 0,
+  },
   orderId: {
     fontSize: 16,
     fontWeight: '700',
@@ -176,6 +180,7 @@ export const styles = StyleSheet.create({
   statusBadge: {
     backgroundColor: '#EFF6FF',
     borderRadius: 999,
+    flexShrink: 0,
     paddingHorizontal: 10,
     paddingVertical: 5,
   },
