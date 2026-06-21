@@ -49,7 +49,16 @@ try {
   }
 
   $composeFiles = "-f docker-compose.staging.yml"
-  $upCommand = "sudo docker compose $composeFiles up -d backend caddy"
+  $upCommands = @("sudo docker compose $composeFiles up -d backend caddy")
+
+  if (-not $UseDomain) {
+    $composeFiles = "-f docker-compose.staging.yml -f docker-compose.staging-ip.yml"
+    $upCommands = @(
+      "sudo docker compose $composeFiles stop caddy || true",
+      "sudo docker compose $composeFiles rm -f caddy || true",
+      "sudo docker compose $composeFiles up -d backend"
+    )
+  }
 
   $remoteScript = @(
     "set -eu",
@@ -63,8 +72,8 @@ try {
     "sudo rsync -a --delete --exclude deploy/staging.env `$RELEASE/ `$APP_DIR/",
     "cd `$APP_DIR",
     "sudo docker compose $composeFiles build backend",
-    "sudo docker compose $composeFiles --profile tools run --rm migrate",
-    $upCommand,
+    "sudo docker compose $composeFiles --profile tools run --rm migrate"
+  ) + $upCommands + @(
     "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do if sudo docker exec rapiv_staging_backend wget -qO- http://127.0.0.1:3000/api/health; then exit 0; fi; sleep 2; done",
     "sudo docker compose $composeFiles logs --tail=120 backend",
     "exit 1"
