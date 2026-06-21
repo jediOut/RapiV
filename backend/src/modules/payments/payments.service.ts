@@ -4,11 +4,12 @@ import {
   ForbiddenException,
   Injectable,
   Optional,
+  ServiceUnavailableException,
   UnauthorizedException
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { DataSource, Repository } from "typeorm";
+import { DataSource, LessThan, Repository } from "typeorm";
 import { In } from "typeorm";
 
 import { Business } from "../businesses/business.entity";
@@ -62,6 +63,24 @@ type CourierWalletWithdrawalResponse = {
   balanceAfterCents: number;
 };
 
+type PaymentConfigurationStatus = {
+  ok: boolean;
+  cardPaymentsEnabled: boolean;
+  returnUrl?: string;
+  checks: {
+    stripeSecretConfigured: boolean;
+    webhookSecretConfigured: boolean;
+    returnUrlConfigured: boolean;
+    returnUrlHttps: boolean;
+  };
+  issues: string[];
+};
+
+type PaymentHealthStatus = PaymentConfigurationStatus & {
+  recoverablePayments: number;
+  stalePaidPendingOrderGroups: number;
+};
+
 @Injectable()
 export class PaymentsService {
   constructor(
@@ -104,6 +123,8 @@ export class PaymentsService {
     if (existing) {
       return this.toResponse(existing);
     }
+
+    this.assertCardCheckoutAvailable();
 
     const orderGroup = await this.ordersService.findByIdForUser(dto.orderGroupId, {
       sub: userId,
@@ -179,6 +200,24 @@ export class PaymentsService {
     });
 
     return payments.map((payment) => this.toResponse(payment));
+  }
+
+  async getPaymentHealth(): Promise<PaymentHealthStatus> {
+    const configuration = this.getPaymentConfigurationStatus();
+    const recoverablePayments = await this.paymentRepository.find({
+      select: { id: true },
+      where: { status: In(["REQUIRES_ACTION", "PROCESSING"]) },
+      take: 500
+    });
+    const stalePaidPendingOrders = await this.findStalePaidPendingOrders();
+
+    return {
+      ...configuration,
+      recoverablePayments: recoverablePayments.length,
+      stalePaidPendingOrderGroups: new Set(
+        stalePaidPendingOrders.map((order) => order.orderGroupId)
+      ).size
+    };
   }
 
   getCourierWallet(userId: string): Promise<CourierWalletSummary> {
@@ -575,6 +614,67 @@ export class PaymentsService {
     )];
   }
 
+  async reconcileRecoverablePayments(): Promise<number> {
+    const recoverablePayments = await this.paymentRepository.find({
+      where: { status: In(["REQUIRES_ACTION", "PROCESSING"]) },
+      order: { updatedAt: "ASC" },
+      take: this.paymentReconciliationBatchSize()
+    });
+
+    let reconciled = 0;
+
+    for (const payment of recoverablePayments) {
+      try {
+        const providerDetails = await this.providerService.findPaymentForLocalPayment(
+          payment.id,
+          payment.providerPaymentId
+        );
+        await this.applyProviderPaymentDetails(payment.id, providerDetails);
+        reconciled += 1;
+      } catch (error) {
+        this.monitoring?.recordPaymentEvent("reconciliation_failed", {
+          paymentId: payment.id,
+          orderGroupId: payment.orderGroupId,
+          error: error instanceof Error ? error.message : "Unknown payment reconciliation error"
+        });
+      }
+    }
+
+    if (reconciled) {
+      this.monitoring?.recordPaymentEvent("reconciliation_completed", { count: reconciled });
+    }
+
+    return reconciled;
+  }
+
+  async alertAndReschedulePaidPendingOrders(): Promise<number> {
+    const stalePaidPendingOrders = await this.findStalePaidPendingOrders();
+    const orderGroupIds = [...new Set(stalePaidPendingOrders.map((order) => order.orderGroupId))];
+
+    for (const orderGroupId of orderGroupIds) {
+      const groupOrders = stalePaidPendingOrders.filter((order) => order.orderGroupId === orderGroupId);
+      this.monitoring?.recordPaymentEvent("paid_pending_order_alert", {
+        orderGroupId,
+        businessOrderCount: groupOrders.length,
+        oldestUpdatedAt: groupOrders
+          .map((order) => order.updatedAt)
+          .filter(Boolean)
+          .sort((left, right) => left.getTime() - right.getTime())[0]?.toISOString()
+      });
+
+      try {
+        await this.ordersService.scheduleBusinessAcceptanceTimeouts(orderGroupId);
+      } catch (error) {
+        this.monitoring?.recordPaymentEvent("paid_pending_reschedule_failed", {
+          orderGroupId,
+          error: error instanceof Error ? error.message : "Unknown paid pending reschedule error"
+        });
+      }
+    }
+
+    return orderGroupIds.length;
+  }
+
   private async applyProviderPaymentDetails(
     paymentId: string,
     providerDetails: {
@@ -696,6 +796,90 @@ export class PaymentsService {
         error: error instanceof Error ? error.message : "Unknown courier payout scheduling error"
       });
     }
+  }
+
+  private getPaymentConfigurationStatus(): PaymentConfigurationStatus {
+    const returnUrl = this.paymentReturnBaseUrl();
+    const checks = {
+      stripeSecretConfigured: Boolean(process.env.STRIPE_SECRET_KEY),
+      webhookSecretConfigured: Boolean(process.env.STRIPE_WEBHOOK_SECRET ?? process.env.PAYMENT_WEBHOOK_SECRET),
+      returnUrlConfigured: Boolean(returnUrl),
+      returnUrlHttps: Boolean(returnUrl?.startsWith("https://"))
+    };
+    const issues: string[] = [];
+
+    if (!checks.stripeSecretConfigured) {
+      issues.push("Missing STRIPE_SECRET_KEY");
+    }
+
+    if (!checks.webhookSecretConfigured) {
+      issues.push("Missing STRIPE_WEBHOOK_SECRET");
+    }
+
+    if (!checks.returnUrlConfigured) {
+      issues.push("Missing PUBLIC_API_URL for Stripe Checkout return URLs");
+    } else if (!checks.returnUrlHttps) {
+      issues.push("PUBLIC_API_URL must be an HTTPS URL for card payments");
+    }
+
+    return {
+      ok: issues.length === 0,
+      cardPaymentsEnabled: issues.length === 0,
+      returnUrl,
+      checks,
+      issues
+    };
+  }
+
+  private assertCardCheckoutAvailable(): void {
+    const status = this.getPaymentConfigurationStatus();
+
+    if (status.ok) {
+      return;
+    }
+
+    this.monitoring?.recordPaymentEvent("card_checkout_unavailable", {
+      issues: status.issues
+    });
+
+    throw new ServiceUnavailableException(
+      "El pago con tarjeta no esta disponible temporalmente. Intenta con efectivo o mas tarde."
+    );
+  }
+
+  private paymentReturnBaseUrl(): string | undefined {
+    const configured = process.env.PUBLIC_API_URL ?? process.env.PUBLIC_APP_URL ?? process.env.CLIENT_APP_URL;
+    return configured?.replace(/\/$/, "");
+  }
+
+  private async findStalePaidPendingOrders(): Promise<Order[]> {
+    const cutoff = new Date(Date.now() - this.paidPendingAlertAgeMs());
+
+    return this.orderRepository.find({
+      where: {
+        paymentMethod: "CARD",
+        paymentStatus: "PAID",
+        status: "PENDING",
+        updatedAt: LessThan(cutoff)
+      },
+      order: { updatedAt: "ASC" },
+      take: 500
+    });
+  }
+
+  private paidPendingAlertAgeMs(): number {
+    return this.minutesToMs(process.env.PAID_PENDING_ORDER_ALERT_MINUTES, 5);
+  }
+
+  private paymentReconciliationBatchSize(): number {
+    const configured = Number(process.env.PAYMENT_RECONCILIATION_BATCH_SIZE ?? 100);
+    return Number.isInteger(configured) && configured > 0 ? configured : 100;
+  }
+
+  private minutesToMs(value: string | undefined, fallback: number): number {
+    const minutes = Number(value ?? fallback);
+    const safeMinutes = Number.isFinite(minutes) && minutes > 0 ? minutes : fallback;
+    return safeMinutes * 60_000;
   }
 
   private async applyProviderCourierWalletTopUpDetails(

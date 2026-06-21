@@ -14,6 +14,7 @@ import { PaymentsService } from "./payments.service";
 export class PaymentWebhookProcessor implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PaymentWebhookProcessor.name);
   private worker?: Worker<PaymentJob>;
+  private reconciliationTimer?: NodeJS.Timeout;
 
   constructor(
     private readonly paymentsService: PaymentsService,
@@ -72,9 +73,18 @@ export class PaymentWebhookProcessor implements OnModuleInit, OnModuleDestroy {
     if (recoverableCourierPayoutOrderGroupIds.length > 0) {
       this.logger.log(`Requeued ${recoverableCourierPayoutOrderGroupIds.length} recoverable courier payouts`);
     }
+
+    await this.runRecoverySweep();
+    this.reconciliationTimer = setInterval(() => {
+      void this.runRecoverySweep();
+    }, this.reconciliationIntervalMs());
   }
 
   async onModuleDestroy(): Promise<void> {
+    if (this.reconciliationTimer) {
+      clearInterval(this.reconciliationTimer);
+    }
+
     await this.worker?.close();
   }
 
@@ -97,5 +107,32 @@ export class PaymentWebhookProcessor implements OnModuleInit, OnModuleDestroy {
 
   private jobDurationMs(job: Job): number {
     return job.finishedOn && job.processedOn ? job.finishedOn - job.processedOn : 0;
+  }
+
+  private async runRecoverySweep(): Promise<void> {
+    try {
+      const reconciledPayments = await this.paymentsService.reconcileRecoverablePayments();
+      const paidPendingOrderGroups = await this.paymentsService.alertAndReschedulePaidPendingOrders();
+
+      if (reconciledPayments || paidPendingOrderGroups) {
+        this.logger.warn(
+          `Payment recovery sweep reconciled ${reconciledPayments} payments and found ${paidPendingOrderGroups} paid pending order groups`
+        );
+      }
+    } catch (error) {
+      this.monitoring.recordPaymentEvent("recovery_sweep_failed", {
+        error: error instanceof Error ? error.message : "Unknown payment recovery sweep error"
+      });
+      this.logger.error(
+        `Payment recovery sweep failed: ${error instanceof Error ? error.message : "unknown error"}`,
+        error instanceof Error ? error.stack : undefined
+      );
+    }
+  }
+
+  private reconciliationIntervalMs(): number {
+    const seconds = Number(process.env.PAYMENT_RECONCILIATION_INTERVAL_SECONDS ?? 300);
+    const safeSeconds = Number.isFinite(seconds) && seconds > 0 ? seconds : 300;
+    return safeSeconds * 1000;
   }
 }

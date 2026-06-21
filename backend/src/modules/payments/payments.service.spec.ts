@@ -4,7 +4,7 @@ import * as assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-import { BadRequestException, UnauthorizedException } from "@nestjs/common";
+import { BadRequestException, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
 
 import { Order } from "../orders/order.entity";
 import { CourierProfile } from "../users/courier-profile.entity";
@@ -101,6 +101,7 @@ function createService(options: {
     ] as Order[]);
   const queuedEventIds: string[] = [];
   const queuedCourierPayoutOrderGroupIds: string[] = [];
+  const scheduledBusinessAcceptanceOrderGroupIds: string[] = [];
   const courierTransferCalls: unknown[] = [];
   const paymentCreateCalls: unknown[] = [];
   const businesses = options.businesses ?? [
@@ -113,9 +114,39 @@ function createService(options: {
   ];
 
   const matches = <T>(entity: T, where: Partial<T>) =>
-    Object.entries(where).every(
-      ([key, value]) => (entity as unknown as Record<string, unknown>)[key] === value
-    );
+    Object.entries(where).every(([key, value]) => {
+      const currentValue = (entity as unknown as Record<string, unknown>)[key];
+      const operator = value as unknown as Record<string, unknown> | null;
+
+      if (operator && typeof operator === "object" && "_type" in operator) {
+        if (operator._type === "in" && Array.isArray(operator._value)) {
+          return operator._value.includes(currentValue);
+        }
+
+        if (operator._type === "lessThan" && operator._value instanceof Date) {
+          return currentValue instanceof Date && currentValue.getTime() < operator._value.getTime();
+        }
+      }
+
+      return currentValue === value;
+    });
+
+  const applyFindOptions = <T extends { updatedAt?: Date }>(
+    values: T[],
+    options?: { where?: Partial<T>; take?: number; order?: { updatedAt?: "ASC" | "DESC" } }
+  ) => {
+    let result = options?.where ? values.filter((value) => matches(value, options.where ?? {})) : values;
+
+    if (options?.order?.updatedAt) {
+      result = [...result].sort((left, right) => {
+        const leftTime = left.updatedAt?.getTime() ?? 0;
+        const rightTime = right.updatedAt?.getTime() ?? 0;
+        return options.order?.updatedAt === "DESC" ? rightTime - leftTime : leftTime - rightTime;
+      });
+    }
+
+    return typeof options?.take === "number" ? result.slice(0, options.take) : result;
+  };
 
   const paymentRepository = {
     create(value: Partial<Payment>) {
@@ -129,8 +160,8 @@ function createService(options: {
     async findOne(options: { where: Partial<Payment> }) {
       return payments.find((payment) => matches(payment, options.where)) ?? null;
     },
-    async find(options: { where: Partial<Payment> }) {
-      return payments.filter((payment) => matches(payment, options.where));
+    async find(options?: { where?: Partial<Payment>; take?: number; order?: { updatedAt?: "ASC" | "DESC" } }) {
+      return applyFindOptions(payments, options);
     },
     async save(payment: Payment) {
       if (
@@ -217,14 +248,8 @@ function createService(options: {
   };
 
   const orderRepository = {
-    async find() {
-      return orders.filter((order) =>
-        order.status === "DELIVERED" &&
-        order.paymentMethod === "CARD" &&
-        order.paymentStatus === "PAID" &&
-        ["PENDING", "FAILED"].includes(String(order.courierPayoutStatus)) &&
-        Number(order.courierPayoutCents ?? 0) > 0
-      );
+    async find(options?: { where?: Partial<Order>; take?: number; order?: { updatedAt?: "ASC" | "DESC" } }) {
+      return applyFindOptions(orders, options);
     }
   };
 
@@ -298,11 +323,12 @@ function createService(options: {
         createdAt: new Date()
       };
     },
-    async scheduleBusinessAcceptanceTimeouts() {
+    async scheduleBusinessAcceptanceTimeouts(nextOrderGroupId: string) {
       if (options.scheduleBusinessAcceptanceTimeoutsError) {
         throw options.scheduleBusinessAcceptanceTimeoutsError;
       }
 
+      scheduledBusinessAcceptanceOrderGroupIds.push(nextOrderGroupId);
       return undefined;
     }
   };
@@ -330,6 +356,9 @@ function createService(options: {
         latestChargeId: "ch_1",
         raw: { id: providerPaymentId, status: "complete", payment_status: "paid" }
       };
+    },
+    async findPaymentForLocalPayment(_localPaymentId: string, providerPaymentId: string) {
+      return this.getPayment(providerPaymentId);
     },
     async getPlatformAccountId() {
       return "acct_platform_1";
@@ -404,6 +433,7 @@ function createService(options: {
     orders,
     queuedEventIds,
     queuedCourierPayoutOrderGroupIds,
+    scheduledBusinessAcceptanceOrderGroupIds,
     paymentCreateCalls,
     courierTransferCalls
   };
@@ -431,15 +461,27 @@ function signedStripeBody(body: object) {
 describe("PaymentsService", () => {
   const originalWebhookSecret = process.env.PAYMENT_WEBHOOK_SECRET;
   const originalStripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  const originalStripeSecretKey = process.env.STRIPE_SECRET_KEY;
+  const originalPublicApiUrl = process.env.PUBLIC_API_URL;
+  const originalPublicAppUrl = process.env.PUBLIC_APP_URL;
+  const originalClientAppUrl = process.env.CLIENT_APP_URL;
 
   beforeEach(() => {
     process.env.PAYMENT_WEBHOOK_SECRET = "test-secret";
+    process.env.STRIPE_SECRET_KEY = "sk_test_123";
+    process.env.PUBLIC_API_URL = "https://staging.test/api";
     delete process.env.STRIPE_WEBHOOK_SECRET;
+    delete process.env.PUBLIC_APP_URL;
+    delete process.env.CLIENT_APP_URL;
   });
 
   afterEach(() => {
     process.env.PAYMENT_WEBHOOK_SECRET = originalWebhookSecret;
     process.env.STRIPE_WEBHOOK_SECRET = originalStripeWebhookSecret;
+    process.env.STRIPE_SECRET_KEY = originalStripeSecretKey;
+    process.env.PUBLIC_API_URL = originalPublicApiUrl;
+    process.env.PUBLIC_APP_URL = originalPublicAppUrl;
+    process.env.CLIENT_APP_URL = originalClientAppUrl;
   });
 
   it("requires an idempotency key when creating a payment", async () => {
@@ -472,6 +514,42 @@ describe("PaymentsService", () => {
     assert.equal(payments[0].amountCents, 2400);
     assert.deepEqual(payments[0].providerMetadata, { safe: true });
     assert.equal(JSON.stringify(payments[0]).includes("card"), false);
+  });
+
+  it("blocks card checkout when payment configuration is not ready", async () => {
+    process.env.PUBLIC_API_URL = "http://staging.test/api";
+    const { service, paymentCreateCalls } = createService();
+
+    await assert.rejects(
+      service.createPayment(customerId, "payment-key-1", { orderGroupId }),
+      ServiceUnavailableException
+    );
+
+    assert.equal(paymentCreateCalls.length, 0);
+  });
+
+  it("reports payment health with configuration and recovery counts", async () => {
+    const oldDate = new Date(Date.now() - 10 * 60_000);
+    const { service } = createService({
+      payments: [createPayment({ status: "PROCESSING" })],
+      orders: [
+        {
+          id: "order-1",
+          orderGroupId,
+          status: "PENDING",
+          paymentMethod: "CARD",
+          paymentStatus: "PAID",
+          updatedAt: oldDate
+        } as Order
+      ]
+    });
+
+    const health = await service.getPaymentHealth();
+
+    assert.equal(health.ok, true);
+    assert.equal(health.cardPaymentsEnabled, true);
+    assert.equal(health.recoverablePayments, 1);
+    assert.equal(health.stalePaidPendingOrderGroups, 1);
   });
 
   it("calculates card business transfers from business subtotal and leaves delivery fee on platform", async () => {
@@ -632,6 +710,37 @@ describe("PaymentsService", () => {
     assert.equal(orders[0].paymentStatus, "PAID");
     assert.equal(orders[0].paidAt, payment.paidAt);
     assert.deepEqual(queuedCourierPayoutOrderGroupIds, [orderGroupId]);
+  });
+
+  it("reconciles recoverable Stripe payments without waiting for a webhook", async () => {
+    const payment = createPayment({ status: "PROCESSING" });
+    const { service, orders } = createService({ payments: [payment] });
+
+    const reconciled = await service.reconcileRecoverablePayments();
+
+    assert.equal(reconciled, 1);
+    assert.equal(payment.status, "SUCCEEDED");
+    assert.equal(orders[0].paymentStatus, "PAID");
+    assert.equal(orders[0].paidAt, payment.paidAt);
+  });
+
+  it("alerts and reschedules paid pending card orders", async () => {
+    const stalePaidPendingOrder = {
+      id: "order-1",
+      orderGroupId,
+      status: "PENDING",
+      paymentMethod: "CARD",
+      paymentStatus: "PAID",
+      updatedAt: new Date(Date.now() - 10 * 60_000)
+    } as Order;
+    const { service, scheduledBusinessAcceptanceOrderGroupIds } = createService({
+      orders: [stalePaidPendingOrder]
+    });
+
+    const alerted = await service.alertAndReschedulePaidPendingOrders();
+
+    assert.equal(alerted, 1);
+    assert.deepEqual(scheduledBusinessAcceptanceOrderGroupIds, [orderGroupId]);
   });
 
   it("creates an idempotent courier payout transfer for delivered paid card orders", async () => {
