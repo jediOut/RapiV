@@ -48,6 +48,18 @@ export type DeliveryOfferSummary = {
   order: OrderGroup;
 };
 
+type ProcessableBusinessOrderNotification = Pick<
+  Order,
+  "id" | "orderGroupId" | "businessId" | "subtotalCents"
+>;
+
+type CustomerStatusNotification = {
+  userId: string;
+  title: string;
+  body: string;
+  data: Record<string, unknown>;
+};
+
 @Injectable()
 export class OrdersService {
   private readonly pendingCreations = new Map<string, Promise<OrderGroup>>();
@@ -138,7 +150,7 @@ export class OrdersService {
     }
 
     try {
-      return await this.dataSource.transaction(async (manager) => {
+      const orderGroup = await this.dataSource.transaction(async (manager) => {
 
         const existingOrder = await manager.findOne(Order, {
           where: { userId: customerId, idempotencyKey }
@@ -275,6 +287,12 @@ export class OrdersService {
         });
         return orderGroup;
       });
+
+      if (orderGroup.paymentMethod === "CASH") {
+        await this.notifyBusinessesProcessableOrders(orderGroup.businessOrders);
+      }
+
+      return orderGroup;
     } catch (error) {
       if (this.isUniqueViolation(error)) {
         const existingOrder = await this.orderRepository.findOne({
@@ -755,6 +773,8 @@ export class OrdersService {
         orderGroupId,
         businessOrderCount: paidPendingOrders.length
       });
+
+      await this.notifyBusinessesProcessableOrders(paidPendingOrders);
     }
   }
 
@@ -954,9 +974,10 @@ export class OrdersService {
     nextStatus: "PICKED_UP" | "ON_THE_WAY" | "DELIVERED",
     cashReceivedCents?: number
   ): Promise<OrderGroup> {
-    return this.dataSource.transaction(async (manager) => {
-      let shouldEnqueueCourierPayout = false;
+    let shouldEnqueueCourierPayout = false;
+    let customerStatusNotification: CustomerStatusNotification | null = null;
 
+    const updatedOrderGroup = await this.dataSource.transaction(async (manager) => {
       const orders = await manager.find(Order, {
         where: { orderGroupId },
         lock: { mode: "pessimistic_write" }
@@ -1000,6 +1021,15 @@ export class OrdersService {
           order.paymentStatus = "PAID";
           order.paidAt = cashCollectedAt;
           order.businessCashPayoutStatus = "NOT_APPLICABLE";
+          if (
+            order.courierPayoutStatus === "PENDING" &&
+            Number(order.courierPayoutCents ?? 0) > 0
+          ) {
+            order.courierPayoutStatus = "PAID";
+            order.courierPayoutPaidAt = cashCollectedAt;
+            order.courierPayoutFailedAt = null;
+            order.courierPayoutError = null;
+          }
         }
 
         if (
@@ -1063,18 +1093,47 @@ export class OrdersService {
         }
       }
 
-      await this.notificationsService.sendToUser(orders[0].userId, {
+      customerStatusNotification = {
+        userId: orders[0].userId,
         title: this.notificationTitleForCourierStatus(nextStatus),
         body: this.notificationBodyForCourierStatus(nextStatus),
         data: { type: "ORDER_STATUS", orderGroupId, status: nextStatus }
-      });
-
-      if (shouldEnqueueCourierPayout) {
-        await this.paymentProcessingQueue.addCourierPayout(orderGroupId);
-      }
+      };
 
       return this.attachCustomerDetails(this.mapCourierOrderGroup(orders));
     });
+
+    const notificationToSend = customerStatusNotification as CustomerStatusNotification | null;
+
+    if (notificationToSend) {
+      try {
+        await this.notificationsService.sendToUser(notificationToSend.userId, {
+          title: notificationToSend.title,
+          body: notificationToSend.body,
+          data: notificationToSend.data
+        });
+      } catch (error) {
+        this.monitoring?.recordNotificationEvent("order_status_failed", {
+          orderGroupId,
+          status: nextStatus,
+          error: error instanceof Error ? error.message : "unknown"
+        });
+      }
+    }
+
+    if (shouldEnqueueCourierPayout) {
+      try {
+        await this.paymentProcessingQueue.addCourierPayout(orderGroupId);
+      } catch (error) {
+        this.monitoring?.recordPaymentEvent("courier_payout_enqueue_failed", {
+          orderGroupId,
+          courierId,
+          error: error instanceof Error ? error.message : "unknown"
+        });
+      }
+    }
+
+    return updatedOrderGroup;
   }
 
   async markBusinessOrderPickedUp(
@@ -1788,6 +1847,44 @@ export class OrdersService {
         }
       });
     }
+  }
+
+  private async notifyBusinessesProcessableOrders(
+    orders: ProcessableBusinessOrderNotification[]
+  ): Promise<void> {
+    for (const order of orders) {
+      const business = await this.businessesService.findById(order.businessId);
+
+      if (!business.ownerUserId) {
+        continue;
+      }
+
+      const pendingOrderCount = await this.countProcessablePendingOrdersForBusiness(order.businessId);
+      const subtotalCents = Number(order.subtotalCents ?? 0);
+
+      await this.notificationsService.sendToUser(business.ownerUserId, {
+        title: pendingOrderCount > 1 ? `${pendingOrderCount} pedidos pendientes` : "Nuevo pedido",
+        body:
+          pendingOrderCount > 1
+            ? `Tienes ${pendingOrderCount} pedidos pendientes por aceptar.`
+            : `Tienes un pedido nuevo por ${this.formatMoney(subtotalCents)}.`,
+        data: {
+          type: "NEW_BUSINESS_ORDER",
+          orderGroupId: order.orderGroupId,
+          businessOrderId: order.id,
+          businessId: order.businessId,
+          pendingOrderCount
+        }
+      });
+    }
+  }
+
+  private async countProcessablePendingOrdersForBusiness(businessId: string): Promise<number> {
+    const pendingOrders = await this.orderRepository.find({
+      where: { businessId, status: "PENDING" }
+    });
+
+    return pendingOrders.filter((order) => this.canBusinessProcessOrder(order)).length;
   }
 
   private async notifyCustomerOrderStatus(

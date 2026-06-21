@@ -83,6 +83,7 @@ function createService(options: {
   courierProfiles?: CourierProfile[];
   users?: User[];
   businessOwnerId?: string;
+  failCourierPayoutQueue?: boolean;
 } = {}) {
   const orders = options.orders ?? [];
   const products = options.products ?? [];
@@ -459,6 +460,10 @@ function createService(options: {
   const paymentProcessingQueue = {
     courierPayoutOrderGroupIds: [] as string[],
     async addCourierPayout(orderGroupId: string) {
+      if (options.failCourierPayoutQueue) {
+        throw new Error("queue unavailable");
+      }
+
       this.courierPayoutOrderGroupIds.push(orderGroupId);
     }
   };
@@ -848,6 +853,62 @@ describe("OrdersService", () => {
         process.env.RAPIV_CASH_PLATFORM_FEE_BPS = originalCashPlatformFee;
       }
     }
+  });
+
+  it("notifies the business owner when a cash order is created", async () => {
+    const { service, sentNotifications } = createService({
+      products: [product],
+      businesses: [openBusiness]
+    });
+
+    const order = await service.create(customerId, "cash-notification-key-1", {
+      deliveryAddress: "Calle Principal 123",
+      paymentMethod: "CASH",
+      items: [{ productId: product.id, quantity: 2 }],
+      latitude: 20.0289,
+      longitude: -96.6472
+    });
+
+    assert.equal(sentNotifications.length, 1);
+    assert.equal(sentNotifications[0].userId, ownerUserId);
+    assert.equal(sentNotifications[0].message.title, "Nuevo pedido");
+    assert.equal(sentNotifications[0].message.data?.type, "NEW_BUSINESS_ORDER");
+    assert.equal(sentNotifications[0].message.data?.orderGroupId, order.id);
+    assert.equal(sentNotifications[0].message.data?.businessOrderId, order.businessOrders[0].id);
+    assert.equal(sentNotifications[0].message.data?.pendingOrderCount, 1);
+  });
+
+  it("notifies the business owner with accumulated pending orders after card payment", async () => {
+    const currentOrder = createOrder({
+      id: "order-current",
+      orderGroupId,
+      paymentMethod: "CARD",
+      paymentStatus: "PAID",
+      status: "PENDING",
+      subtotalCents: 1200
+    });
+    const existingPendingOrder = createOrder({
+      id: "order-existing",
+      orderGroupId: "group-existing",
+      paymentMethod: "CASH",
+      paymentStatus: "UNPAID",
+      status: "PENDING",
+      subtotalCents: 800
+    });
+    const { service, sentNotifications } = createService({
+      orders: [currentOrder, existingPendingOrder],
+      businesses: [openBusiness]
+    });
+
+    await service.scheduleBusinessAcceptanceTimeouts(orderGroupId);
+
+    assert.equal(sentNotifications.length, 1);
+    assert.equal(sentNotifications[0].userId, ownerUserId);
+    assert.equal(sentNotifications[0].message.title, "2 pedidos pendientes");
+    assert.equal(sentNotifications[0].message.body, "Tienes 2 pedidos pendientes por aceptar.");
+    assert.equal(sentNotifications[0].message.data?.type, "NEW_BUSINESS_ORDER");
+    assert.equal(sentNotifications[0].message.data?.businessOrderId, currentOrder.id);
+    assert.equal(sentNotifications[0].message.data?.pendingOrderCount, 2);
   });
 
   it("enforces business order status transitions", async () => {
@@ -1449,6 +1510,55 @@ describe("OrdersService", () => {
 
     assert.equal(delivered.status, "DELIVERED");
     assert.deepEqual(queuedCourierPayoutOrderGroupIds, [orderGroupId]);
+  });
+
+  it("keeps card delivery completed when courier payout queue fails", async () => {
+    const order = createOrder({
+      status: "ON_THE_WAY",
+      courierId,
+      paymentMethod: "CARD",
+      paymentStatus: "PAID",
+      courierPayoutCents: 2000,
+      courierPayoutStatus: "PENDING"
+    });
+    const { service, queuedCourierPayoutOrderGroupIds } = createService({
+      orders: [order],
+      failCourierPayoutQueue: true
+    });
+
+    const delivered = await service.updateCourierDeliveryStatus(courierId, orderGroupId, "DELIVERED");
+
+    assert.equal(delivered.status, "DELIVERED");
+    assert.equal(order.status, "DELIVERED");
+    assert.deepEqual(queuedCourierPayoutOrderGroupIds, []);
+  });
+
+  it("marks cash courier payout paid when the courier collects delivery cash", async () => {
+    const order = createOrder({
+      status: "ON_THE_WAY",
+      courierId,
+      paymentMethod: "CASH",
+      paymentStatus: "UNPAID",
+      paidAt: null,
+      courierPayoutCents: 2500,
+      courierPayoutStatus: "PENDING"
+    });
+    const { service, queuedCourierPayoutOrderGroupIds } = createService({ orders: [order] });
+
+    const delivered = await service.updateCourierDeliveryStatus(
+      courierId,
+      orderGroupId,
+      "DELIVERED",
+      5000
+    );
+
+    assert.equal(delivered.status, "DELIVERED");
+    assert.equal(order.paymentStatus, "PAID");
+    assert.equal(order.cashReceivedCents, 5000);
+    assert.equal(order.cashChangeCents, 3800);
+    assert.equal(order.courierPayoutStatus, "PAID");
+    assert.ok(order.courierPayoutPaidAt);
+    assert.deepEqual(queuedCourierPayoutOrderGroupIds, []);
   });
 
   it("limits order access by user role and ownership", async () => {
