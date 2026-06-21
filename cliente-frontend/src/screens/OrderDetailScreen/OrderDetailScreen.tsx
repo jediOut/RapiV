@@ -53,6 +53,24 @@ function getTimelineIndex(status: Order['status']) {
   return 0;
 }
 
+function formatMoney(value: number | null | undefined) {
+  const amount = Number(value);
+  return `$${(Number.isFinite(amount) ? amount : 0).toFixed(2)}`;
+}
+
+function formatCents(value: number | null | undefined) {
+  return formatMoney((value ?? 0) / 100);
+}
+
+function isValidCoordinate(location: { latitude: number; longitude: number } | null | undefined) {
+  return (
+    location !== null &&
+    location !== undefined &&
+    Number.isFinite(Number(location.latitude)) &&
+    Number.isFinite(Number(location.longitude))
+  );
+}
+
 export default function OrderDetailScreen({ navigation, route }: Props) {
   const { orderId } = route.params;
   const [order, setOrder] = useState<Order | null>(null);
@@ -108,10 +126,20 @@ export default function OrderDetailScreen({ navigation, route }: Props) {
         if (latestOrder.paymentStatus === 'PAID' || syncedPayment.status === 'SUCCEEDED') {
           setPendingPaymentId(null);
           setIsConfirmingPayment(false);
+          paymentIdempotencyKeyRef.current = null;
+          return;
+        }
+
+        if (syncedPayment.status === 'REQUIRES_ACTION' || syncedPayment.status === 'FAILED' || syncedPayment.status === 'CANCELLED') {
+          setPendingPaymentId(null);
+          setIsConfirmingPayment(false);
+          paymentIdempotencyKeyRef.current = null;
         }
       } catch {
         if (attempts >= 24 && isMounted) {
+          setPendingPaymentId(null);
           setIsConfirmingPayment(false);
+          paymentIdempotencyKeyRef.current = null;
         }
       }
     }
@@ -137,9 +165,7 @@ export default function OrderDetailScreen({ navigation, route }: Props) {
       return;
     }
 
-    const recoverablePayment = payments.find((payment) =>
-      payment.status === 'REQUIRES_ACTION' || payment.status === 'PROCESSING'
-    );
+    const recoverablePayment = payments.find((payment) => payment.status === 'PROCESSING');
 
     if (recoverablePayment) {
       setPendingPaymentId(recoverablePayment.id);
@@ -363,6 +389,22 @@ export default function OrderDetailScreen({ navigation, route }: Props) {
     );
   }
 
+  const orderItems = order.items ?? [];
+  const totalPrice = Number.isFinite(Number(order.totalPrice)) ? Number(order.totalPrice) : 0;
+  const safeCustomerLocation = isValidCoordinate(deliveryLocation?.customer)
+    ? {
+        latitude: Number(deliveryLocation?.customer?.latitude),
+        longitude: Number(deliveryLocation?.customer?.longitude),
+      }
+    : null;
+  const safeCourierLocation = isValidCoordinate(deliveryLocation?.courier)
+    ? {
+        latitude: Number(deliveryLocation?.courier?.latitude),
+        longitude: Number(deliveryLocation?.courier?.longitude),
+      }
+    : null;
+  const canShowDeliveryMap = Boolean(safeCustomerLocation || safeCourierLocation);
+
   return (
     <SafeAreaView style={styles.container}>
       <Header title="Detalle del pedido" onBackPress={() => navigation.goBack()} />
@@ -420,7 +462,7 @@ export default function OrderDetailScreen({ navigation, route }: Props) {
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Artículos</Text>
-          {order.items.map((item, index) => (
+          {orderItems.map((item, index) => (
             <View key={index} style={styles.itemRow}>
               <View style={styles.itemInfo}>
                 <Text style={styles.itemName}>{item.productName}</Text>
@@ -429,7 +471,7 @@ export default function OrderDetailScreen({ navigation, route }: Props) {
                 </Text>
               </View>
               <Text style={styles.itemPrice}>
-                ${(item.price * item.quantity).toFixed(2)}
+                {formatMoney(Number(item.price) * Number(item.quantity))}
               </Text>
             </View>
           ))}
@@ -440,13 +482,13 @@ export default function OrderDetailScreen({ navigation, route }: Props) {
           <View style={styles.summaryRow}>
             <Text style={styles.summaryLabel}>Subtotal:</Text>
             <Text style={styles.summaryValue}>
-              ${order.totalPrice.toFixed(2)}
+              {formatMoney(totalPrice)}
             </Text>
           </View>
           <View style={styles.summaryRow}>
             <Text style={styles.totalLabel}>Total:</Text>
             <Text style={styles.totalValue}>
-              ${order.totalPrice.toFixed(2)}
+              {formatMoney(totalPrice)}
             </Text>
           </View>
         </View>
@@ -460,9 +502,9 @@ export default function OrderDetailScreen({ navigation, route }: Props) {
               </Text>
               {order.paymentMethod === 'CASH' ? (
                 <Text style={styles.paymentHint}>
-                  Efectivo {order.fulfillmentMethod === 'PICKUP' ? 'al recoger' : 'al recibir'}: ${(order.totalPrice).toFixed(2)}
+                  Efectivo {order.fulfillmentMethod === 'PICKUP' ? 'al recoger' : 'al recibir'}: {formatMoney(totalPrice)}
                   {order.cashReceivedCents !== null && order.cashReceivedCents !== undefined
-                    ? ` - Recibido: $${(order.cashReceivedCents / 100).toFixed(2)} - Cambio: $${((order.cashChangeCents ?? 0) / 100).toFixed(2)}`
+                    ? ` - Recibido: ${formatCents(order.cashReceivedCents)} - Cambio: ${formatCents(order.cashChangeCents)}`
                     : ''}
                 </Text>
               ) : payments[0] ? (
@@ -502,7 +544,7 @@ export default function OrderDetailScreen({ navigation, route }: Props) {
           </Text>
         </View>
 
-        {deliveryLocation ? (
+        {canShowDeliveryMap ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Ubicación de entrega</Text>
             <MapView
@@ -511,19 +553,19 @@ export default function OrderDetailScreen({ navigation, route }: Props) {
               minZoomLevel={VEGA_MAP_LIMITS.minZoomLevel}
               pitchEnabled={false}
               region={regionInVega({
-                latitude: deliveryLocation.courier?.latitude ?? deliveryLocation.customer?.latitude ?? VEGA_SERVICE_address.latitude,
-                longitude: deliveryLocation.courier?.longitude ?? deliveryLocation.customer?.longitude ?? VEGA_SERVICE_address.longitude,
+                latitude: safeCourierLocation?.latitude ?? safeCustomerLocation?.latitude ?? VEGA_SERVICE_address.latitude,
+                longitude: safeCourierLocation?.longitude ?? safeCustomerLocation?.longitude ?? VEGA_SERVICE_address.longitude,
               })}
               rotateEnabled={false}
               scrollEnabled={false}
               style={styles.map}
               zoomEnabled={false}
             >
-              {deliveryLocation.customer ? (
-                <Marker coordinate={clampToVegaBounds(deliveryLocation.customer)} title="Tu ubicación" />
+              {safeCustomerLocation ? (
+                <Marker coordinate={clampToVegaBounds(safeCustomerLocation)} title="Tu ubicación" />
               ) : null}
-              {deliveryLocation.courier ? (
-                <Marker coordinate={clampToVegaBounds(deliveryLocation.courier)} title="Repartidor" pinColor={colors.primary} />
+              {safeCourierLocation ? (
+                <Marker coordinate={clampToVegaBounds(safeCourierLocation)} title="Repartidor" pinColor={colors.primary} />
               ) : null}
             </MapView>
           </View>

@@ -50,13 +50,15 @@ export default function App() {
         await sessionStorage.saveSession(nextSession);
         setSession(nextSession);
       } catch (error) {
-        await sessionStorage.clearSession();
-        setSession(null);
-        setAuthError(
-          isApiError(error) && error.code === 'unauthorized'
-            ? 'Tu sesión expiró. Inicia sesión nuevamente.'
-            : null
-        );
+        if (isApiError(error) && error.code === 'unauthorized') {
+          await sessionStorage.clearSession();
+          setSession(null);
+          setAuthError('Tu sesión expiró. Inicia sesión nuevamente.');
+          return;
+        }
+
+        setSession(storedSession);
+        setAuthError(null);
       } finally {
         setIsRestoringSession(false);
       }
