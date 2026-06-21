@@ -173,12 +173,38 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
         });
       }
 
-      const [offers, assigned, courierStripeProfile, courierWallet] = await Promise.all([
+      const assigned = await fetchAssignedOrders(token);
+      const [offersResult, courierStripeProfileResult, courierWalletResult] = await Promise.allSettled([
         fetchDeliveryOffers(token),
-        fetchAssignedOrders(token),
         fetchCourierStripeProfile(token),
         fetchCourierWallet(token),
       ]);
+
+      const offers = offersResult.status === 'fulfilled' ? offersResult.value : [];
+      const courierStripeProfile =
+        courierStripeProfileResult.status === 'fulfilled' ? courierStripeProfileResult.value : null;
+      const courierWallet = courierWalletResult.status === 'fulfilled' ? courierWalletResult.value : null;
+
+      if (courierStripeProfileResult.status === 'rejected') {
+        setProfileError(
+          courierStripeProfileResult.reason instanceof Error
+            ? courierStripeProfileResult.reason.message
+            : 'No pudimos cargar Stripe Connect.'
+        );
+      } else {
+        setProfileError(null);
+      }
+
+      if (courierWalletResult.status === 'rejected') {
+        setWalletError(
+          courierWalletResult.reason instanceof Error
+            ? courierWalletResult.reason.message
+            : 'No pudimos cargar tu depósito.'
+        );
+      } else {
+        setWalletError(null);
+      }
+
       const hasActiveDelivery = assigned.some((order) =>
         ACTIVE_PARTIAL_DELIVERY_STATUSES.includes(order.status as typeof ACTIVE_PARTIAL_DELIVERY_STATUSES[number])
       );
@@ -199,10 +225,17 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
       const active = assigned.filter((order) =>
         ACTIVE_PARTIAL_DELIVERY_STATUSES.includes(order.status as typeof ACTIVE_PARTIAL_DELIVERY_STATUSES[number])
       );
-      const locations = await Promise.all(
+      const locations = await Promise.allSettled(
         active.map(async (order) => [order.id, await fetchDeliveryLocation(token, order.id)] as const)
       );
-      setDeliveryLocations(Object.fromEntries(locations));
+      setDeliveryLocations(Object.fromEntries(
+        locations
+          .filter((result): result is PromiseFulfilledResult<readonly [string, {
+            customer: { latitude: number; longitude: number } | null;
+            courier: { latitude: number; longitude: number } | null;
+          }]> => result.status === 'fulfilled')
+          .map((result) => result.value)
+      ));
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : 'No se pudo cargar los pedidos');
     } finally {
