@@ -43,7 +43,7 @@ export class PaymentProcessingQueue implements OnModuleDestroy {
 
   async addCourierPayout(orderGroupId: string): Promise<void> {
     const options: JobsOptions = {
-      jobId: `courier-payout:${orderGroupId}`,
+      jobId: `courier-payout__${orderGroupId}`,
       attempts: 8,
       backoff: {
         type: "exponential",
