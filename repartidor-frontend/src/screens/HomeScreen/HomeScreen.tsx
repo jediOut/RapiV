@@ -364,7 +364,8 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
   async function mutateOrder<T>(
     orderId: string,
     mutation: (token: string) => Promise<T>,
-    onSuccess?: (result: T) => void
+    onSuccess?: (result: T) => void,
+    options: { reloadAfterSuccess?: boolean } = {}
   ) {
     setMutatingOrderId(orderId);
     setError(null);
@@ -379,7 +380,9 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
 
       const result = await mutation(token);
       onSuccess?.(result);
-      await loadOrders({ preserveCurrentOrders: true });
+      if (options.reloadAfterSuccess !== false) {
+        await loadOrders({ preserveCurrentOrders: true });
+      }
     } catch (mutationError) {
       setError(mutationError instanceof Error ? mutationError.message : 'No se pudo actualizar el pedido');
     } finally {
@@ -434,7 +437,7 @@ const HomeScreen: React.FC<HomeScreenProps> = ({ onLogout }) => {
           ? 'El cliente ya tenia registrado este aviso.'
           : 'Se registro el aviso para el cliente.'
       );
-    });
+    }, { reloadAfterSuccess: false });
   }
 
   async function openSuggestedRoute(destination: Coordinates) {

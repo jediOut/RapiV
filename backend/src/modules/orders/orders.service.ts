@@ -1278,7 +1278,7 @@ export class OrdersService {
     }
 
     await this.orderRepository.save(orders);
-    await this.sendCourierArrivedNotification(firstOrder);
+    await this.sendCourierArrivedNotificationSafe(firstOrder);
     return { ok: true, alreadyNotified: false };
   }
 
@@ -1980,7 +1980,7 @@ export class OrdersService {
     }
 
     await this.orderRepository.save(orders);
-    await this.sendCourierArrivedNotification(firstOrder);
+    await this.sendCourierArrivedNotificationSafe(firstOrder);
   }
 
   private async sendCourierArrivedNotification(firstOrder: Order): Promise<void> {
@@ -1989,6 +1989,17 @@ export class OrdersService {
       body: "El repartidor ya llego a tu ubicacion. Puedes salir a recibir tu pedido.",
       data: { type: "COURIER_ARRIVED", orderGroupId: firstOrder.orderGroupId }
     });
+  }
+
+  private async sendCourierArrivedNotificationSafe(firstOrder: Order): Promise<void> {
+    try {
+      await this.sendCourierArrivedNotification(firstOrder);
+    } catch (error) {
+      this.monitoring?.recordNotificationEvent("courier_arrived_failed", {
+        orderGroupId: firstOrder.orderGroupId,
+        error: error instanceof Error ? error.message : "unknown"
+      });
+    }
   }
 
   private notificationTitleForBusinessStatus(status: BusinessOrderStatus): string {
