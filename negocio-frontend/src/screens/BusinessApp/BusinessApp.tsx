@@ -948,7 +948,6 @@ export function BusinessApp({
             }
             isOpen={isOpen}
             orders={orders}
-            onOpenOrders={() => setScreen("orders")}
             prepTime={prepTime}
             salesTotal={
               salesTotal

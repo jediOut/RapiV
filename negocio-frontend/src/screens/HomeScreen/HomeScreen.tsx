@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Switch, Text, View } from "react-native";
+import { StyleSheet, Switch, Text, View } from "react-native";
 
 import { MetricCard } from "../../components/MetricCard";
 import { OrderRow } from "../../components/OrderRow";
@@ -11,7 +11,6 @@ type HomeScreenProps = {
   availableProducts: number;
   isOpen: boolean;
   orders: BusinessOrder[];
-  onOpenOrders: () => void;
   prepTime: string;
   salesTotal: number;
   setIsOpen: (value: boolean) => void;
@@ -21,7 +20,6 @@ export function HomeScreen({
   activeOrders,
   availableProducts,
   isOpen,
-  onOpenOrders,
   orders,
   prepTime,
   salesTotal,
@@ -61,9 +59,6 @@ export function HomeScreen({
                 : 'Cuando llegue un pedido, aparecerá aquí.'}
             </Text>
           </View>
-          <Pressable onPress={onOpenOrders} style={styles.panelAction}>
-            <Text style={styles.panelActionText}>Ver pedidos</Text>
-          </Pressable>
         </View>
         {activeOrderList.length === 0 ? (
           <StateView compact message="Tu negocio está listo para recibir pedidos." title="Sin pedidos activos" />
@@ -140,19 +135,5 @@ const styles = StyleSheet.create({
     gap: 12,
     justifyContent: "space-between",
     marginBottom: 4
-  },
-  panelAction: {
-    alignItems: "center",
-    backgroundColor: colors.primary,
-    borderRadius: 8,
-    flexShrink: 0,
-    justifyContent: "center",
-    minHeight: 38,
-    paddingHorizontal: 12
-  },
-  panelActionText: {
-    color: colors.surface,
-    fontSize: 12,
-    fontWeight: "900"
   }
 });

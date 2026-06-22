@@ -287,7 +287,7 @@ export function OrderRow({ order, compact = false, onConfirmCashPayout, onUpdate
                 onPress={() => requestStatusChange('REJECTED')}
                 style={[styles.actionButton, styles.rejectButton]}
               >
-                <Text style={styles.rejectText}>Rechazar</Text>
+                <Text numberOfLines={1} adjustsFontSizeToFit style={styles.rejectText}>Rechazar</Text>
               </TouchableOpacity>
             ) : null}
             {canConfirmCashPayout && order.fulfillmentMethod === 'PICKUP' ? (
@@ -295,18 +295,18 @@ export function OrderRow({ order, compact = false, onConfirmCashPayout, onUpdate
                 onPress={requestCashPayoutConfirmation}
                 style={styles.actionButton}
               >
-                <Text style={styles.actionText}>Confirmar pago</Text>
+                <Text numberOfLines={1} adjustsFontSizeToFit style={styles.actionText}>Confirmar pago</Text>
               </TouchableOpacity>
             ) : canProcessOrder ? (
               <TouchableOpacity
                 onPress={() => requestStatusChange(order.status === 'PENDING' ? 'ACCEPTED' : order.status === 'ACCEPTED' ? 'PREPARING' : order.status === 'READY' ? 'DELIVERED' : 'READY')}
                 style={styles.actionButton}
               >
-                <Text style={styles.actionText}>{actionLabel}</Text>
+                <Text numberOfLines={1} adjustsFontSizeToFit style={styles.actionText}>{actionLabel}</Text>
               </TouchableOpacity>
             ) : (
               <View style={[styles.actionButton, styles.disabledAction]}>
-                <Text style={styles.disabledActionText}>Esperando pago</Text>
+                <Text numberOfLines={1} adjustsFontSizeToFit style={styles.disabledActionText}>Esperando pago</Text>
               </View>
             )}
           </View>
@@ -315,7 +315,7 @@ export function OrderRow({ order, compact = false, onConfirmCashPayout, onUpdate
             onPress={requestCashPayoutConfirmation}
             style={styles.actionButton}
           >
-            <Text style={styles.actionText}>Confirmar recibido</Text>
+            <Text numberOfLines={1} adjustsFontSizeToFit style={styles.actionText}>Confirmar recibido</Text>
           </TouchableOpacity>
         ) : null}
       </View>
@@ -478,11 +478,14 @@ const styles = StyleSheet.create({
   orderFooter: {
     alignItems: "center",
     flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
     justifyContent: "space-between",
     marginTop: 12
   },
   orderTotal: {
     color: colors.primary,
+    flexShrink: 0,
     fontSize: 18,
     fontWeight: "900"
   },
@@ -493,19 +496,30 @@ const styles = StyleSheet.create({
     backgroundColor: "#FEE2E2"
   },
   actionButton: {
+    alignItems: "center",
     backgroundColor: colors.primary,
     borderRadius: 8,
-    paddingHorizontal: 14,
+    flexShrink: 1,
+    justifyContent: "center",
+    minHeight: 44,
+    minWidth: 104,
+    paddingHorizontal: 12,
     paddingVertical: 10
   },
   actions: {
+    alignItems: "stretch",
+    flex: 1,
     flexDirection: "row",
-    gap: 8
+    flexWrap: "wrap",
+    gap: 8,
+    justifyContent: "flex-end",
+    minWidth: 0
   },
   actionText: {
     color: colors.surface,
     fontSize: 13,
-    fontWeight: "800"
+    fontWeight: "800",
+    textAlign: "center"
   },
   rejectButton: {
     backgroundColor: colors.surface,
@@ -515,7 +529,8 @@ const styles = StyleSheet.create({
   rejectText: {
     color: "#B91C1C",
     fontSize: 13,
-    fontWeight: "800"
+    fontWeight: "800",
+    textAlign: "center"
   },
   disabledAction: {
     backgroundColor: colors.disabled
@@ -523,6 +538,7 @@ const styles = StyleSheet.create({
   disabledActionText: {
     color: colors.muted,
     fontSize: 13,
-    fontWeight: "800"
+    fontWeight: "800",
+    textAlign: "center"
   }
 });
