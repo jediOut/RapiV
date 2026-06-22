@@ -1,0 +1,67 @@
+{
+  "project_info": {
+    "project_number": "126687353427",
+    "project_id": "rapiv-2450d",
+    "storage_bucket": "rapiv-2450d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:126687353427:android:c64c4c5144006a2f50c4a6",
+        "android_client_info": {
+          "package_name": "com.rapiv.business"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAzTeWJW6yJdp_vm_U7Y-1W10dshJYF9ho"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:126687353427:android:71f4d8792d38df2c50c4a6",
+        "android_client_info": {
+          "package_name": "com.rapiv.client"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAzTeWJW6yJdp_vm_U7Y-1W10dshJYF9ho"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:126687353427:android:fc8ea4081686692b50c4a6",
+        "android_client_info": {
+          "package_name": "com.rapiv.courier"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAzTeWJW6yJdp_vm_U7Y-1W10dshJYF9ho"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

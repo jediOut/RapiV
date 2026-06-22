@@ -2,7 +2,7 @@
   "expo": {
     "name": "RapiV Negocios",
     "slug": "rapiv-business",
-    "version": "0.1.4",
+    "version": "0.1.5",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "icon": "./assets/icon.png",
@@ -21,7 +21,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.rapiv.business",
-      "buildNumber": "5",
+      "buildNumber": "6",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "RapiV usa tu ubicación para registrar la ubicación real de tu negocio."
       }
@@ -38,8 +38,9 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0F766E"
       },
+      "googleServicesFile": "./google-services.json",
       "package": "com.rapiv.business",
-      "versionCode": 5
+      "versionCode": 6
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -51,6 +52,8 @@
       }
     },
     "plugins": [
+      "@react-native-firebase/app",
+      "@react-native-firebase/crashlytics",
       "expo-asset",
       "expo-secure-store",
       "expo-location",

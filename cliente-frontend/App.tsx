@@ -17,6 +17,7 @@ import { authApi } from './src/services/authApi';
 import { isApiError } from './src/services/apiError';
 import { registerPushNotifications } from './src/services/notificationRegistration';
 import { sessionStorage } from './src/services/sessionStorage';
+import { identifyCrashUser, logCrashBreadcrumb, recordNonFatalError } from './src/services/crashReporting';
 import { colors } from './src/theme/colors';
 import { CURRENT_TERMS_VERSION } from './src/config/legal';
 import type { AuthSession } from './src/types/auth';
@@ -49,6 +50,8 @@ export default function App() {
 
         await sessionStorage.saveSession(nextSession);
         setSession(nextSession);
+        identifyCrashUser(nextSession.user.id ?? nextSession.user.email, { email: nextSession.user.email });
+        logCrashBreadcrumb('cliente_session_restored');
       } catch (error) {
         if (isApiError(error) && error.code === 'unauthorized') {
           await sessionStorage.clearSession();
@@ -59,6 +62,8 @@ export default function App() {
 
         setSession(storedSession);
         setAuthError(null);
+        identifyCrashUser(storedSession.user.id ?? storedSession.user.email, { email: storedSession.user.email });
+        recordNonFatalError(error, { flow: 'cliente_restore_session' });
       } finally {
         setIsRestoringSession(false);
       }
@@ -72,7 +77,10 @@ export default function App() {
       return;
     }
 
-    void registerPushNotifications('cliente');
+    identifyCrashUser(session.user.id ?? session.user.email, { email: session.user.email });
+    void registerPushNotifications('cliente').catch((error) => {
+      recordNonFatalError(error, { flow: 'cliente_register_push' });
+    });
   }, [session?.accessToken]);
 
   async function handleLogout() {
@@ -94,7 +102,10 @@ export default function App() {
       });
       await sessionStorage.saveSession(nextSession);
       setSession(nextSession);
+      identifyCrashUser(nextSession.user.id ?? nextSession.user.email, { email: nextSession.user.email });
+      logCrashBreadcrumb('cliente_google_login_success');
     } catch (error) {
+      recordNonFatalError(error, { flow: 'cliente_google_login' });
       setAuthError(error instanceof Error ? error.message : 'No se pudo iniciar sesión con Google');
     } finally {
       setIsAuthenticating(false);

@@ -8,6 +8,7 @@ import {
   validateSession
 } from "./src/services/authApi";
 import { isApiError } from "./src/services/apiError";
+import { identifyCrashUser, logCrashBreadcrumb, recordNonFatalError } from "./src/services/crashReporting";
 import { registerPushNotifications } from "./src/services/notificationRegistration";
 import { clearSession, loadSession, saveSession } from "./src/services/sessionStorage";
 import { BusinessApp } from "./src/screens/BusinessApp";
@@ -35,6 +36,8 @@ export default function App() {
         const validSession = await validateSession(storedSession);
         await saveSession(validSession);
         setSession(validSession);
+        identifyCrashUser(validSession.user.id ?? validSession.user.email, { email: validSession.user.email });
+        logCrashBreadcrumb("negocio_session_restored");
       } catch (error) {
         if (isApiError(error) && error.code === "unauthorized") {
           await clearSession();
@@ -45,6 +48,8 @@ export default function App() {
 
         setSession(storedSession);
         setAuthError(null);
+        identifyCrashUser(storedSession.user.id ?? storedSession.user.email, { email: storedSession.user.email });
+        recordNonFatalError(error, { flow: "negocio_restore_session" });
       } finally {
         setIsRestoringSession(false);
       }
@@ -58,7 +63,9 @@ export default function App() {
       return;
     }
 
+    identifyCrashUser(session.user.id ?? session.user.email, { email: session.user.email });
     void registerPushNotifications("negocio").catch((error) => {
+      recordNonFatalError(error, { flow: "negocio_register_push" });
       console.warn("No se pudo registrar push de negocio", error);
     });
   }, [session?.accessToken]);
@@ -71,7 +78,10 @@ export default function App() {
       const nextSession = await loginBusinessUserWithGoogle(idToken);
       await saveSession(nextSession);
       setSession(nextSession);
+      identifyCrashUser(nextSession.user.id ?? nextSession.user.email, { email: nextSession.user.email });
+      logCrashBreadcrumb("negocio_google_login_success");
     } catch (error) {
+      recordNonFatalError(error, { flow: "negocio_google_login" });
       setAuthError(error instanceof Error ? error.message : "No se pudo iniciar sesion con Google");
     } finally {
       setIsAuthenticating(false);

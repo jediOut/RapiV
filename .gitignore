@@ -7,6 +7,9 @@
 *.p12
 credentials.json
 google-services.json
+!cliente-frontend/google-services.json
+!negocio-frontend/google-services.json
+!repartidor-frontend/google-services.json
 deploy/staging.env
 !.env.example
 !backend/.env.example

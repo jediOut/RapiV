@@ -11,6 +11,7 @@ import { authApi } from './src/services/authApi';
 import { isApiError } from './src/services/apiError';
 import { registerPushNotifications } from './src/services/notificationRegistration';
 import { sessionStorage } from './src/services/sessionStorage';
+import { identifyCrashUser, logCrashBreadcrumb, recordNonFatalError } from './src/services/crashReporting';
 import { colors } from './src/theme/colors';
 import { CURRENT_TERMS_VERSION } from './src/config/legal';
 import type { AuthSession } from './src/types/auth';
@@ -42,7 +43,10 @@ export default function App() {
 
         await sessionStorage.saveSession(nextSession);
         setSession(nextSession);
+        identifyCrashUser(nextSession.user.id ?? nextSession.user.email, { email: nextSession.user.email });
+        logCrashBreadcrumb('repartidor_session_restored');
       } catch (error) {
+        recordNonFatalError(error, { flow: 'repartidor_restore_session' });
         await sessionStorage.clearSession();
         setSession(null);
         setAuthError(
@@ -63,7 +67,10 @@ export default function App() {
       return;
     }
 
-    void registerPushNotifications('repartidor');
+    identifyCrashUser(session.user.id ?? session.user.email, { email: session.user.email });
+    void registerPushNotifications('repartidor').catch((error) => {
+      recordNonFatalError(error, { flow: 'repartidor_register_push' });
+    });
   }, [session?.accessToken]);
 
   async function handleLogout() {
@@ -85,7 +92,10 @@ export default function App() {
       });
       await sessionStorage.saveSession(nextSession);
       setSession(nextSession);
+      identifyCrashUser(nextSession.user.id ?? nextSession.user.email, { email: nextSession.user.email });
+      logCrashBreadcrumb('repartidor_google_login_success');
     } catch (error) {
+      recordNonFatalError(error, { flow: 'repartidor_google_login' });
       setAuthError(error instanceof Error ? error.message : 'No se pudo iniciar sesión con Google');
     } finally {
       setIsAuthenticating(false);
