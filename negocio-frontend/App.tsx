@@ -36,16 +36,18 @@ export default function App() {
         await saveSession(validSession);
         setSession(validSession);
       } catch (error) {
-        await clearSession();
-        setSession(null);
-        setAuthError(
-          isApiError(error) && error.code === "unauthorized"
-            ? "Tu sesión expiró. Inicia sesión nuevamente."
-            : null
-        );
-      }
+        if (isApiError(error) && error.code === "unauthorized") {
+          await clearSession();
+          setSession(null);
+          setAuthError("Tu sesion expiro. Inicia sesion nuevamente.");
+          return;
+        }
 
-      setIsRestoringSession(false);
+        setSession(storedSession);
+        setAuthError(null);
+      } finally {
+        setIsRestoringSession(false);
+      }
     }
 
     void restoreSession();
@@ -56,7 +58,9 @@ export default function App() {
       return;
     }
 
-    void registerPushNotifications("negocio");
+    void registerPushNotifications("negocio").catch((error) => {
+      console.warn("No se pudo registrar push de negocio", error);
+    });
   }, [session?.accessToken]);
 
   async function handleGoogleLogin(idToken: string) {
@@ -68,7 +72,7 @@ export default function App() {
       await saveSession(nextSession);
       setSession(nextSession);
     } catch (error) {
-      setAuthError(error instanceof Error ? error.message : "No se pudo iniciar sesión con Google");
+      setAuthError(error instanceof Error ? error.message : "No se pudo iniciar sesion con Google");
     } finally {
       setIsAuthenticating(false);
     }
@@ -83,7 +87,7 @@ export default function App() {
     return (
       <SafeAreaProvider>
         <SafeAreaView style={styles.safeArea}>
-          <StateView title="Cargando RapiV" message="Estamos restaurando tu sesión." type="loading" />
+          <StateView title="Cargando RapiV" message="Estamos restaurando tu sesion." type="loading" />
         </SafeAreaView>
       </SafeAreaProvider>
     );
@@ -95,7 +99,7 @@ export default function App() {
         <StatusBar style="dark" />
         {session && !(session.user.roles ?? []).includes("BUSINESS_OWNER") ? (
           <StateView
-            actionLabel="Cerrar sesión"
+            actionLabel="Cerrar sesion"
             message="Este correo pertenece a otra app de RapiV. Usa una cuenta de negocio para entrar aqui."
             onAction={handleLogout}
             title="Cuenta no valida"
