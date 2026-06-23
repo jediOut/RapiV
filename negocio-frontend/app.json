@@ -2,7 +2,7 @@
   "expo": {
     "name": "RapiV Negocios",
     "slug": "rapiv-business",
-    "version": "0.1.5",
+    "version": "0.1.6",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "icon": "./assets/icon.png",
@@ -21,7 +21,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.rapiv.business",
-      "buildNumber": "6",
+      "buildNumber": "7",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "RapiV usa tu ubicación para registrar la ubicación real de tu negocio."
       }
@@ -40,7 +40,7 @@
       },
       "googleServicesFile": "./google-services.json",
       "package": "com.rapiv.business",
-      "versionCode": 6
+      "versionCode": 7
     },
     "web": {
       "favicon": "./assets/favicon.png"

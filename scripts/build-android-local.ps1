@@ -109,6 +109,8 @@ foreach ($requiredLocalEnv in @("GOOGLE_MAPS_ANDROID_API_KEY")) {
     $dockerArgs += @("--env", "$requiredLocalEnv=$hostEnvValue")
   } elseif ($appEnv.ContainsKey($requiredLocalEnv) -and $appEnv[$requiredLocalEnv]) {
     $dockerArgs += @("--env", "$requiredLocalEnv=$($appEnv[$requiredLocalEnv])")
+  } else {
+    throw "Falta $requiredLocalEnv. Definela en la variable de entorno del sistema o en $appEnvFile antes de construir Android."
   }
 }
 
