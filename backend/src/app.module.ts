@@ -20,6 +20,12 @@ import { MonitoringModule } from "./modules/monitoring/monitoring.module";
 import { RatingsModule } from "./modules/ratings/ratings.module";
 import { AdminModule } from "./modules/admin/admin.module";
 
+const jwtSecret = process.env.JWT_SECRET;
+
+if (!jwtSecret) {
+  throw new Error("JWT_SECRET is required");
+}
+
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: ["../.env", ".env"] }),
@@ -27,7 +33,7 @@ import { AdminModule } from "./modules/admin/admin.module";
     DatabaseModule,
     JwtModule.register({
       global: true,
-      secret: process.env.JWT_SECRET ?? "dev-secret-change-me",
+      secret: jwtSecret,
       signOptions: { expiresIn: "7d" }
     }),
     UsersModule,
